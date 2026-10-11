@@ -1,0 +1,172 @@
+# AWIC Configuration Sample
+# This file documents the real topology of this development bench and configures
+# safe operational limits. Edit sections marked [CUSTOMIZE] before deployment.
+
+# ==============================================================================
+# Server Configuration
+# ==============================================================================
+[server]
+# Bind address for the HTTP/WebSocket server
+# Default: 127.0.0.1:8080 (localhost only)
+# To accept remote connections, use 0.0.0.0:8080 (with caution; see [auth] section)
+bind = "127.0.0.1:8080"
+
+# SCPI over TCP (separate port)
+scpi_port = 5025
+
+# Directory holding the built frontend (Vite output).
+# Matches the Containerfile's final COPY destination.
+static_dir = "/usr/share/awic/dist"
+
+# Browser origins, besides this server's own address, allowed to open /ws and
+# /mcp. Browsers do not protect WebSockets with the same-origin policy, so any
+# web page you visit could otherwise drive the bench. Scripts and MCP clients
+# send no Origin header and are not affected. Default: the Vite dev server.
+# allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+# Writable directory for the server's own session state (e.g. which USB ports
+# you locked or unlocked). Default: $XDG_STATE_HOME/awic, else
+# ~/.local/state/awic. The container image sets /var/lib/awic, where
+# tools/run.sh mounts the host's ./state.
+# state_dir = "/home/me/.local/state/awic"
+
+# ==============================================================================
+# USB Port Power
+# ==============================================================================
+# Nothing to configure. Hub ports that support per-port power switching are
+# discovered from the bus at start and whenever devices come and go.
+#
+# Ports are PROTECTED by default when what is plugged in is a hub (cutting it
+# cuts everything behind it), a keyboard/mouse, a disk, or a Bluetooth adapter.
+# Everything else - instruments, programmers, UARTs, empty ports - can be
+# switched. Lock or unlock any port from the web UI (or MCP); those choices are
+# stored as session state in state_dir, not here.
+
+# ==============================================================================
+# Authentication (Optional)
+# ==============================================================================
+[auth]
+# Optional bearer token for web UI and MCP transport.
+# If unset (the default), the service accepts unauthenticated connections.
+# [CUSTOMIZE] Set to a strong random value if your bench is on an untrusted network.
+# Example: `token = "$(python3 -c 'import secrets; print(secrets.token_hex(16))')"`
+# token = "your-secret-token-here"
+
+# ==============================================================================
+# Firmware Handling (Resolution Chain)
+# ==============================================================================
+[firmware]
+# Automatic download of firmware blobs from the internet.
+# Options: false (default), true
+# When false, firmware comes from:
+#   1. Operator overrides: .fw files placed in config/firmware/ on the host
+#      (seen as /etc/awic/firmware in the container)
+#   2. Baked into the container image (from sigrok-firmware-fx2lafw Debian package)
+#      - fx2lafw-hantek-6022bl.fw (FX2 oscilloscope)
+#      - fx2lafw-saleae-logic.fw (fx2lafw logic analyzers)
+# true is not implemented yet: firmware is then refused rather than downloaded.
+# When it is, firmware will be downloaded from pinned URLs and verified against
+# committed SHA-256 checksums before use. Never use unverified downloads;
+# firmware is executed by hardware, so this is a code-execution path.
+auto_download = false
+
+# ==============================================================================
+# Power Supply Soft Limits (Mandatory in Core)
+# ==============================================================================
+# These limits are the ONLY guardrail when authentication is disabled.
+# They are enforced in awic-core for every setpoint from every transport.
+# A violation is refused with a named error, logged, and pushed to the UI as an event.
+
+[[psu.limits]]
+# Wildcard device selector: applies to all attached supplies
+device = "*"
+# Maximum voltage setpoint (volts)
+# [CUSTOMIZE] Adjust based on the fragility of your test load (default: 5.5 V for USB)
+v_max = 5.5
+# Maximum current limit (amps)
+# [CUSTOMIZE] Adjust based on the current budget of your test load
+i_max = 1.0
+
+# ==============================================================================
+# Device Watcher (Hot-plug Detection)
+# ==============================================================================
+[watcher]
+# Mode for detecting device hot-plug events.
+# Options:
+#   "netlink" (default): udev netlink monitor, sub-100 ms latency
+#                        (requires --net=host in the container)
+#   "polling":           Poll /sys/bus/usb/devices every 1 second,
+#                        ~1 second latency, works with network isolation
+mode = "netlink"
+
+# ==============================================================================
+# Instrument Backends
+# ==============================================================================
+[backends]
+# Real hardware through the native Rust drivers (fx2lafw logic analyzer; the
+# FX2 oscilloscope scope from M4).
+native = true
+# Synthetic instruments on a bus path no real device can use — for developing
+# the UI, MCP and SCPI without hardware. Safe to enable alongside `native`.
+fake = false
+
+# ==============================================================================
+# Graph Renderer (Visualization Backend)
+# ==============================================================================
+[renderer]
+# Default waveform renderer for the web UI.
+# Options:
+#   "webgl2" (default): Streaming-capable, 16 digital + 4 analog lanes at 60 fps
+#   "plotly":           Richest interaction out of the box, ~1 MB gzipped, loaded on-demand
+#   "uplot":            Minimal, excellent for traces with ~100 k points (not implemented)
+# WebGL2 is the default (SPEC §5.3, D-05): Plotly is built for figures, not
+# streams, and live mode redraws at up to 60 fps. Plotly stays selectable and
+# is the right choice for PSU logging plots; the abstraction exists precisely
+# so this choice is a config change, not a code change.
+default = "webgl2"
+
+# ==============================================================================
+# Recorder (Continuous, Compressed, Searchable History — SPEC §2.8)
+# ==============================================================================
+[recorder]
+# Memory budget shared by every recording, in megabytes.
+# Over budget, the oldest blocks (and their summary buckets) are evicted from
+# whichever recording holds the globally oldest retained data, until total
+# usage is back at or under this bound; a recording's first_sample advances
+# and clients see the retained span shrink from the left.
+# [CUSTOMIZE] At 1 MS/s with a few slow digital channels this holds hours; at
+# the oscilloscope's 16 MS/s with two noisy channels, it holds tens of seconds.
+memory_mb = 256
+
+# ==============================================================================
+# MCP monitor (the web UI's MCP tab)
+# ==============================================================================
+[mcp]
+# Log MCP requests and responses so the MCP tab can show them. Sessions and
+# call counters are tracked either way; both switches can also be flipped at
+# runtime from the MCP tab.
+log = true
+# Also keep the pictures render_view returned to agents (the bulk of the log).
+log_images = true
+# Memory bound for the whole log, pictures included; oldest entries go first.
+log_memory_mb = 16
+
+# ==============================================================================
+# Terminal Module — Serial Source (SPEC §11.2, §11.2.1)
+# ==============================================================================
+[serial]
+# Root of the sysfs tree scanned for USB-serial tty nodes:
+#   <sysfs_root>/bus/usb/devices/<interface>/tty/ttyACM*   (CDC-ACM, e.g. the
+#     Raspberry Pi Debug Probe)
+#   <sysfs_root>/bus/usb/devices/<interface>/ttyUSB*       (usb-serial
+#     bridges: FTDI, CH340, CP210x, PL2303)
+# Re-scanned on every `usb.changed` event; no polling of its own.
+sysfs_root = "/sys"
+
+# Directory the discovered tty device nodes are actually opened from.
+# [CUSTOMIZE] Leave unset (commented out) to auto-detect: the server prefers
+# /host/dev (this image's bind mount of the host's /dev, see tools/run.sh/
+# tools/run-rootful.sh's `-v /dev:/host/dev`) and falls back to /dev, which is
+# correct when running the binary directly on the host instead of in the
+# container.
+# tty_dir = "/host/dev"

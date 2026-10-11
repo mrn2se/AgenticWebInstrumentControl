@@ -1,0 +1,29 @@
+{
+  "_comment": "Golden terminal-frame-header vectors (SPECIFICATION.md §3.5, §11.2). Shared by crates/awic-proto/tests/term_frame_vectors.rs and web/src/ws/term-frame-vectors.test.ts so neither codec can drift from the other unnoticed. No byte_len field: a terminal frame is always exactly one WebSocket message, so the transport already carries its length.",
+  "vectors": [
+    {
+      "name": "typical log line",
+      "hex": "a701010001000000",
+      "session_id": 1,
+      "sequence": 1
+    },
+    {
+      "name": "byte-order sentinel: every field distinct bytes",
+      "hex": "a701020106030403",
+      "session_id": 258,
+      "sequence": 50594566
+    },
+    {
+      "name": "field maxima",
+      "hex": "a701ffffffffffff",
+      "session_id": 65535,
+      "sequence": 4294967295
+    },
+    {
+      "name": "no payload (a bare drop marker with nothing following yet)",
+      "hex": "a70105002a000000",
+      "session_id": 5,
+      "sequence": 42
+    }
+  ]
+}

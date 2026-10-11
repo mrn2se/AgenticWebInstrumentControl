@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AWIC</title>
+    <!-- web/public/favicon.svg is the source; the .ico and the touch icon are rendered from it. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" href="/awic-icon.png" />
+    <script>
+      // Best-effort head start on SPEC §11.1's resolved-theme attribute, so
+      // there is no flash of the wrong theme while main.ts loads.
+      // `shell/theme-controller.ts` re-derives and owns this value once the
+      // app starts — this only has to agree with it, not replace it.
+      (function () {
+        try {
+          var choice = window.localStorage.getItem("awic-theme");
+          var dark = choice === "dark" || (choice !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+  </head>
+  <body class="h-full m-0 font-sans bg-awic-bg text-awic-fg">
+    <div id="app" class="flex min-h-screen flex-col"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

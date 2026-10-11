@@ -1,0 +1,7 @@
+# pyvisa over a plain TCP socket for `make visa`: proves AWIC's SCPI port
+# (SPECIFICATION.md §9) is driveable by a standard VISA client and not only by
+# AWIC's own tools. pyvisa-py is the pure-Python VISA backend, so there is no
+# NI-VISA install anywhere in this.
+FROM docker.io/library/python:3.13-slim
+RUN pip install --no-cache-dir pyvisa==1.14.1 pyvisa-py==0.7.2 >/dev/null
+WORKDIR /visa

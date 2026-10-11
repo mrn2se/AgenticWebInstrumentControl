@@ -1,0 +1,25 @@
+# FX2 oscilloscope — scope mode, before firmware upload (04b4:602a) and after it.
+# sigrok's firmware re-enumerates it as the GENERIC fx2lafw ID 1d50:608e
+# (iSerial "Hantek 6022BL"), not an oscilloscope ID — observed with lsusb -v. That ID
+# is shared by every sigrok-fx2lafw device, which is fine: all are instruments.
+SUBSYSTEM=="usb", ATTR{idVendor}=="04b4", ATTR{idProduct}=="602a", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608e", MODE="0660", GROUP="plugdev"
+# fx2lafw logic analyzer — and the oscilloscope when its physical switch is in logic position (§5.1)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0660", GROUP="plugdev"
+
+# Hubs — by CLASS (bDeviceClass 09), not VID:PID: switchable ports are
+# discovered from the bus (SPECIFICATION.md §4.4), so any hub plugged in later
+# must work without editing this file. Port power control talks to the HUB,
+# not to the device behind it, so the hub's own node must be writable.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}=="09", MODE="0660", GROUP="plugdev"
+
+# Port power via the kernel's per-port `disable` attribute (Linux >= 6.0).
+# AWIC switches ports through this attribute rather than a raw hub control
+# transfer: a raw CLEAR_FEATURE(PORT_POWER) flips the hub's port power bit
+# but the kernel never processes the disconnect, leaving a powered-off device
+# enumerated. The attribute lives under the hub's *interface* (driver "hub"),
+# e.g. 3-3.4:1.0/3-3.4-port2/disable, and is root:root 0644 by default.
+# Root hubs (interface N-0:1.0) are excluded: their ports carry the host's own
+# devices, and AWIC never switches them.
+SUBSYSTEM=="usb", DRIVER=="hub", KERNEL!="*-0:1.0", \
+  RUN+="/bin/sh -c 'chgrp plugdev $sys$devpath/*-port*/disable; chmod 0664 $sys$devpath/*-port*/disable'"

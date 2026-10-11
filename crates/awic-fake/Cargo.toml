@@ -1,0 +1,16 @@
+[package]
+name = "awic-fake"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Synthetic Backend for testing without hardware (SPEC §14)."
+
+[dependencies]
+awic-core.workspace = true
+awic-proto.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+rand.workspace = true
+bytes.workspace = true

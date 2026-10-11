@@ -1,0 +1,96 @@
+{
+  "_comment": "Golden view-frame-header vectors generated from SPECIFICATION.md \u00a73.4. Shared by crates/awic-proto/tests/view_frame_vectors.rs and (later) a web/src/ws/view-frame-vectors.test.ts so neither codec can drift from the spec unnoticed. first_sample/samples_per_item are decimal strings because u64 does not survive a JSON number.",
+  "vectors": [
+    {
+      "name": "typical digital runs, live follow view",
+      "view_id": 4,
+      "sequence": 1,
+      "kind": 1,
+      "channel_count": 8,
+      "sample_bits": 8,
+      "flags": 1,
+      "item_count": 3,
+      "first_sample": "0",
+      "samples_per_item": "1",
+      "hex": "a601040001000000010808010300000000000000000000000100000000000000"
+    },
+    {
+      "name": "typical analog summary (min/max), fixed range",
+      "view_id": 7,
+      "sequence": 12,
+      "kind": 4,
+      "channel_count": 2,
+      "sample_bits": 16,
+      "flags": 0,
+      "item_count": 1600,
+      "first_sample": "3100000",
+      "samples_per_item": "1024",
+      "hex": "a60107000c0000000402100040060000604d2f00000000000004000000000000"
+    },
+    {
+      "name": "digital summary with truncated flag (evicted range)",
+      "view_id": 1,
+      "sequence": 3,
+      "kind": 2,
+      "channel_count": 8,
+      "sample_bits": 8,
+      "flags": 2,
+      "item_count": 512,
+      "first_sample": "1024",
+      "samples_per_item": "64",
+      "hex": "a601010003000000020808020002000000040000000000004000000000000000"
+    },
+    {
+      "name": "analog raw, both flags set",
+      "view_id": 9,
+      "sequence": 5,
+      "kind": 3,
+      "channel_count": 1,
+      "sample_bits": 8,
+      "flags": 3,
+      "item_count": 2048,
+      "first_sample": "0",
+      "samples_per_item": "1",
+      "hex": "a601090005000000030108030008000000000000000000000100000000000000"
+    },
+    {
+      "name": "byte-order sentinel: every field distinct bytes",
+      "view_id": 513,
+      "sequence": 100992003,
+      "kind": 2,
+      "channel_count": 8,
+      "sample_bits": 16,
+      "flags": 2,
+      "item_count": 286263560,
+      "first_sample": "1735880461161533969",
+      "samples_per_item": "2314601843866147353",
+      "hex": "a60101020304050602081002080910111112131415161718191a1b1c1d1e1f20"
+    },
+    {
+      "name": "field maxima: catches width and sign bugs",
+      "view_id": 65535,
+      "sequence": 4294967295,
+      "kind": 4,
+      "channel_count": 255,
+      "sample_bits": 255,
+      "flags": 3,
+      "item_count": 4294967295,
+      "first_sample": "18446744073709551615",
+      "samples_per_item": "18446744073709551615",
+      "hex": "a601ffffffffffff04ffff03ffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "first_sample above 2^53: breaks any decoder using a JS number",
+      "view_id": 2,
+      "sequence": 9,
+      "kind": 1,
+      "channel_count": 8,
+      "sample_bits": 8,
+      "flags": 0,
+      "item_count": 1,
+      "first_sample": "9007199254740993",
+      "samples_per_item": "1",
+      "hex": "a601020009000000010808000100000001000000000020000100000000000000"
+    }
+  ]
+}

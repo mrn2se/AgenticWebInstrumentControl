@@ -1,0 +1,72 @@
+/*
+ * Tailwind entry point (SPECIFICATION.md §11). One global stylesheet reaches
+ * every module because the shell and the modules render into light DOM, not
+ * shadow roots (see shell/module.ts) — a global stylesheet cannot reach
+ * inside a shadow root at all.
+ */
+@import "tailwindcss";
+
+/*
+ * Dark mode is driven by `data-theme` on <html>, never by `prefers-color-
+ * scheme` directly (SPEC §11.1): `shell/theme-controller.ts` resolves the
+ * three-state choice (system/light/dark) to "light"/"dark" and always sets
+ * this attribute — including while the choice is "system", tracking the OS
+ * preference live. `dark:` utilities anywhere in the app follow this same
+ * attribute, so there is exactly one thing that decides the theme.
+ */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /*
+   * Semantic color tokens, redefined for dark under [data-theme="dark"]
+   * below. Declared under the `--color-*` namespace so ordinary Tailwind
+   * utilities work (`bg-awic-bg`, `text-awic-fg`, `border-awic-border`, ...)
+   * — but kept as plain, named CSS custom properties (not just Tailwind's
+   * internal `--tw-*` machinery) because render/plotly-theme.ts reads them
+   * with `getComputedStyle` so Plotly's SVG, which cannot inherit page CSS
+   * the way ordinary elements do, can follow the same theme (SPEC §11.1).
+   */
+  --color-awic-bg: #f7f7f8;
+  --color-awic-bg-raised: #ffffff;
+  --color-awic-fg: #16171a;
+  --color-awic-fg-muted: #5b5d63;
+  --color-awic-border: #d8d8dc;
+  --color-awic-accent: #2563eb;
+  --color-awic-accent-fg: #ffffff;
+  --color-awic-danger: #b3261e;
+  --color-awic-danger-bg: #fdecea;
+  --color-awic-ok: #1a7f37;
+  --color-awic-ok-bg: #e6f4ea;
+  --color-awic-warn: #9a6700;
+  --color-awic-warn-bg: #fff6e0;
+}
+
+[data-theme="dark"] {
+  --color-awic-bg: #16171a;
+  --color-awic-bg-raised: #202226;
+  --color-awic-fg: #e7e8ea;
+  --color-awic-fg-muted: #9a9ca3;
+  --color-awic-border: #34363b;
+  --color-awic-accent: #6ea8fe;
+  --color-awic-accent-fg: #0b1220;
+  --color-awic-danger: #ff6b6b;
+  --color-awic-danger-bg: #3a1f1f;
+  --color-awic-ok: #4ada6f;
+  --color-awic-ok-bg: #123321;
+  --color-awic-warn: #e0a742;
+  --color-awic-warn-bg: #3a2f12;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}

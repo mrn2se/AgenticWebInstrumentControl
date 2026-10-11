@@ -1,0 +1,21 @@
+[package]
+name = "awic-scpi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Pragmatic SCPI parser and command engine (SPECIFICATION.md §9), independent of transport."
+
+[lib]
+name = "awic_scpi"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+# Only to drive `async fn`s in tests (`#[tokio::test]`) — the engine itself
+# calls no tokio API and does no I/O of its own (DEVELOPMENT.md §2: "pure
+# crates depend on no tokio, no I/O; the server owns tasks").
+tokio = { workspace = true, features = ["macros", "rt"] }

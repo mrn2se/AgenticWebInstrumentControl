@@ -1,0 +1,31 @@
+[package]
+name = "awic-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "awic_core"
+path = "src/lib.rs"
+
+[dependencies]
+awic-proto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+figment = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+
+[features]
+# `fixtures`: load the bench recordings in `testdata/bench/` as captures, for
+# other crates' tests (`awic_core::fixtures`).
+fixtures = []
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

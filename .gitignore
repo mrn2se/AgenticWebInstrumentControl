@@ -1,0 +1,25 @@
+# Rust
+/target
+
+# Node.js
+node_modules/
+dist/
+
+# Generated code
+# web/src/proto/types.ts is generated from Rust via ts-rs at build time
+web/src/proto/types.ts
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Server session state (USB port locks etc.), written at runtime
+/state/
+
+# Agent worktrees (Claude Code), never part of the project
+/.claude/worktrees/
+/THIRD-PARTY-LICENSES.txt

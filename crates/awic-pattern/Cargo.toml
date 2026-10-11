@@ -1,0 +1,19 @@
+[package]
+name = "awic-pattern"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "awic_pattern"
+path = "src/lib.rs"
+
+# Pure crate: no tokio, no I/O, no awic-* dependency (DEVELOPMENT.md §2).
+# `awic-record` (T13) supplies the real `Run`/summary types later, in the
+# server glue (T18); until then this crate defines its own small input types
+# so the two can be built and tested independently.
+[dependencies]
+
+[dev-dependencies]
+proptest = { workspace = true }

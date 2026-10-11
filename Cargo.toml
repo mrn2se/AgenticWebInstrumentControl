@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/awic-proto",
+    "crates/awic-core",
+    "crates/awic-usb",
+    "crates/awic-fake",
+    "crates/awic-server",
+    "crates/awic-native",
+    "crates/awic-record",
+    "crates/awic-decode",
+    "crates/awic-pattern",
+    "crates/awic-scpi",
+    "crates/awic-render",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+[workspace.dependencies]
+awic-proto = { path = "crates/awic-proto" }
+awic-core = { path = "crates/awic-core" }
+awic-usb = { path = "crates/awic-usb" }
+awic-fake = { path = "crates/awic-fake" }
+awic-native = { path = "crates/awic-native" }
+awic-record = { path = "crates/awic-record" }
+awic-decode = { path = "crates/awic-decode" }
+awic-pattern = { path = "crates/awic-pattern" }
+awic-scpi = { path = "crates/awic-scpi" }
+awic-render = { path = "crates/awic-render" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ts-rs = "12"
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+figment = { version = "0.10", features = ["toml", "env"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+async-trait = "0.1"
+bytes = "1"
+proptest = "1"
+
+# Wave 2
+# `tokio` is mandatory, not optional: without it nusb panics at runtime
+# ("Awaiting blocking syscall without an async runtime") on the first real
+# control transfer — and no hardware-free test ever reaches that path.
+nusb = { version = "0.2", features = ["tokio"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+futures = "0.3"
+rand = "0.9"
+libc = "0.2"
+tempfile = "3"
+
+# Wave 5 (terminal module, SPEC §11.2/§11.2.1)
+# Pure-Rust syscall wrappers — no C library, no -sys crate — for opening tty
+# nodes with the exact flags/termios control the serial source needs.
+rustix = { version = "1", features = ["fs", "termios", "process"] }
+base64 = "0.22"
+
+# Wave 6 (MCP server, SPEC §8): `serial_expect`'s regex matching against the
+# terminal module's byte stream. Pure Rust, no C dependency.
+regex = "1"
+
+# `render_view` as PNG (live test F-09): rasterizes the SVG views for clients
+# that cannot display SVG. Pure Rust; text with the host's installed fonts
+# (none is embedded), no image decoders — these views never contain images.
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"] }

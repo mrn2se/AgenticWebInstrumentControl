@@ -1,0 +1,14 @@
+# Points ts-rs (see crates/awic-proto) at the frontend source tree so that
+# `cargo test export_bindings` regenerates web/src/proto/types.ts in place,
+# regardless of which directory `cargo test` is invoked from.
+#
+# `relative = true` resolves the value relative to this file's directory
+# (the workspace root), so the exported path is always
+# <workspace-root>/web/src/proto, independent of the test binary's cwd.
+[env]
+TS_RS_EXPORT_DIR = { value = "web/src/proto", relative = true }
+# The wire protocol's u64 fields (rate_hz, sample counts, t0_ns) are values a
+# plain `JSON.parse` on the client can represent exactly as `number` (well
+# under 2^53) — ts-rs's default `bigint` binding would require every caller
+# to special-case JSON parsing/stringifying for no benefit here.
+TS_RS_LARGE_INT = "number"

@@ -1,0 +1,68 @@
+[package]
+name = "awic-server"
+version = "0.1.2"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "axum HTTP/WebSocket server (SPEC §3)."
+
+[lib]
+name = "awic_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "awic"
+path = "src/main.rs"
+
+[dependencies]
+awic-core.workspace = true
+awic-proto.workspace = true
+# `awic-fake` and `awic-usb` are wired for the crate graph (DEVELOPMENT.md
+# §3) but not depended on by any code in this crate yet: both are still empty
+# stub crates being built by other tasks in parallel. This crate talks only to
+# `awic-core`'s `Backend`/`Instrument` traits and to a `UsbController` trait
+# defined locally (see `src/usb.rs`), so the real backends can be wired in
+# later without touching this crate's logic.
+awic-fake.workspace = true
+awic-usb.workspace = true
+awic-native.workspace = true
+awic-record.workspace = true
+awic-decode.workspace = true
+awic-pattern.workspace = true
+awic-scpi.workspace = true
+awic-render.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+anyhow.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Already in the dependency tree via axum; used to percent-decode ?token=.
+form_urlencoded = "1.2"
+async-trait.workspace = true
+bytes.workspace = true
+rustix.workspace = true
+base64.workspace = true
+libc.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+uuid.workspace = true
+# `embed-web` only: the built frontend compiled into the binary, so a release
+# is one file (see `http::static_router`).
+rust-embed = { version = "8", optional = true, features = ["mime-guess"] }
+
+[features]
+# Compile `web/dist` into the binary. `web/dist` must be built first
+# (`npm run build` in web/); the release workflow does this.
+embed-web = ["dep:rust-embed"]
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-tungstenite = "0.29"
+# Bench recordings (`testdata/bench/`) for tests and `examples/record_fixture.rs`.
+awic-core = { workspace = true, features = ["fixtures"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tower = { version = "0.5", features = ["util"] }

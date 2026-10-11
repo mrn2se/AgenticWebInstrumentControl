@@ -1,0 +1,2 @@
+# Place .fw files here to override the firmware baked into the image.
+# The server logs which source supplied each blob.

@@ -1,0 +1,5 @@
+# Bench recordings (testdata/bench/*.bin) are raw samples. Git's NUL-byte
+# heuristic reads them as text — scope data around ADC code 128 has no NUL —
+# so they diffed as "lines" (one SPI recording as 166 148 of them) and a
+# checkout with core.autocrlf would rewrite their 0x0A bytes.
+*.bin binary

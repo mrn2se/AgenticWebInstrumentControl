@@ -1,0 +1,22 @@
+# cargo-about configuration for THIRD-PARTY-LICENSES.txt (see generate.sh).
+# Where a crate offers a choice, the first accepted license in this list is
+# the one its notice is given under.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "MPL-2.0",
+]
+# Only what is compiled into the release executable.
+targets = ["x86_64-unknown-linux-musl"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# AWIC's own crates are under its own license, not third-party.
+private = { ignore = true }

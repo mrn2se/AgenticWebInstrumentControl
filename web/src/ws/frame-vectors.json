@@ -1,0 +1,65 @@
+{
+  "_comment": "Golden frame-header vectors generated from SPECIFICATION.md \u00a73.2. Shared by crates/awic-proto/tests/frame_vectors.rs and web/src/ws/frame-vectors.test.ts so neither codec can drift from the spec unnoticed. t0_ns is a decimal string because u64 does not survive a JSON number.",
+  "vectors": [
+    {
+      "name": "typical live analog frame",
+      "hex": "a50107000100000000020000000400000000000000000000",
+      "stream_id": 7,
+      "sequence": 1,
+      "encoding": 0,
+      "channel_count": 2,
+      "sample_count": 1024,
+      "t0_ns": "0"
+    },
+    {
+      "name": "byte-order sentinel: every field distinct bytes",
+      "hex": "a501020106050403020800000a0908071211100f0e0d0c0b",
+      "stream_id": 258,
+      "sequence": 50595078,
+      "encoding": 2,
+      "channel_count": 8,
+      "sample_count": 117967114,
+      "t0_ns": "796025588171149586"
+    },
+    {
+      "name": "field maxima: catches width and sign bugs",
+      "hex": "a501ffffffffffff03ff0000ffffffffffffffffffffffff",
+      "stream_id": 65535,
+      "sequence": 4294967295,
+      "encoding": 3,
+      "channel_count": 255,
+      "sample_count": 4294967295,
+      "t0_ns": "18446744073709551615"
+    },
+    {
+      "name": "t0 above 2^53: breaks any decoder using a JS number",
+      "hex": "a50101002a00000001010000010000000100000000002000",
+      "stream_id": 1,
+      "sequence": 42,
+      "encoding": 1,
+      "channel_count": 1,
+      "sample_count": 1,
+      "t0_ns": "9007199254740993"
+    },
+    {
+      "name": "decimated i16 analog preview",
+      "hex": "a501030009000000040200000002000040420f0000000000",
+      "stream_id": 3,
+      "sequence": 9,
+      "encoding": 4,
+      "channel_count": 2,
+      "sample_count": 512,
+      "t0_ns": "1000000"
+    },
+    {
+      "name": "decimated digital preview: bitwise AND/OR",
+      "hex": "a50105004d000000050800000002000080841e0000000000",
+      "stream_id": 5,
+      "sequence": 77,
+      "encoding": 5,
+      "channel_count": 8,
+      "sample_count": 512,
+      "t0_ns": "2000000"
+    }
+  ]
+}

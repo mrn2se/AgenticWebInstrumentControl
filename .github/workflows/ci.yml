@@ -1,0 +1,191 @@
+# CI on every push and pull request. Publishing a GitHub release (tag
+# `v<version>`) builds with that version and attaches to the release:
+#   - awic-linux-x86_64: a statically linked (musl) Linux x86_64 `awic`
+#     executable with the web frontend compiled in (`embed-web` feature), so
+#     it runs on any Linux host without a container, a libc match, or a
+#     `static_dir`.
+#   - awic-linux-x86_64.cdx.json, awic-web.cdx.json: CycloneDX SBOMs of the
+#     executable's Rust crates and of the web frontend's runtime packages.
+#   - THIRD-PARTY-LICENSES.txt: the license notices of everything compiled
+#     into the executable, which MIT/BSD/Apache-2.0 require to go with it
+#     (tools/licenses/generate.sh).
+#
+# The audit job checks every Rust crate and npm package against the known
+# advisories (and npm's registry signatures); the executable is only built,
+# and a release only gets its files, when it passes.
+#
+# Order matters as in the Containerfile: web/src/proto/types.ts is generated
+# from the Rust wire types by ts-rs, so every web step first runs the
+# `export_bindings` tests to produce it.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: "22"
+  TARGET: x86_64-unknown-linux-musl
+  ASSET: awic-linux-x86_64
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # rustup reads rust-toolchain.toml (pinned version, rustfmt, clippy).
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Every crate in Cargo.lock against the RustSec advisory database.
+      # --deny warnings also fails on crates marked unmaintained, unsound
+      # or yanked. A reviewed exception goes in .cargo/audit.toml.
+      - run: cargo audit --deny warnings
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # Build tools (dev dependencies) included: they run on this machine
+      # and produce what ships. Any severity fails.
+      - working-directory: web
+        run: npm audit
+      # Every installed package as published by the npm registry, unaltered.
+      - working-directory: web
+        run: npm ci && npm audit signatures
+
+  web:
+    name: Web (typecheck, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate wire types (ts-rs)
+        run: |
+          cargo test --locked -p awic-proto export_bindings
+          test -s web/src/proto/types.ts
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - working-directory: web
+        run: npm ci
+      - working-directory: web
+        run: npm run typecheck
+      - working-directory: web
+        run: npm test
+      - working-directory: web
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Build single executable
+    needs: [rust, web, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - run: rustup target add ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+      # The release tag is the version; cargo rejects one that is not semver.
+      - name: Set version from release tag
+        if: github.event_name == 'release'
+        run: |
+          sed -i "0,/^version = .*/s//version = \"${GITHUB_REF_NAME#v}\"/" crates/awic-server/Cargo.toml
+          cargo update --workspace
+      # Every dependency is pure Rust on Linux (no -sys crate links C), so
+      # the musl target needs no cross toolchain and yields a static binary.
+      - name: Build
+        run: >
+          cargo build --release --locked
+          --target ${{ env.TARGET }}
+          -p awic-server --bin awic --features embed-web
+      - name: Package
+        run: |
+          install -m 755 target/${{ env.TARGET }}/release/awic "$ASSET"
+          strip "$ASSET"
+          file "$ASSET"
+          # Fail if anything slipped in that would make it dynamic.
+          file "$ASSET" | grep -q 'static'
+          sha256sum "$ASSET"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+      - name: SBOM
+        run: |
+          cargo cyclonedx --manifest-path crates/awic-server/Cargo.toml --format json \
+            --target ${{ env.TARGET }} --features embed-web --describe binaries
+          mv crates/awic-server/awic_bin.cdx.json "$ASSET.cdx.json"
+          npm sbom --prefix web --package-lock-only --omit dev --sbom-format cyclonedx > awic-web.cdx.json
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # Only the runtime packages: they are what embed-web compiles in.
+      - working-directory: web
+        run: npm ci --omit dev
+      - name: Third-party licenses
+        run: tools/licenses/generate.sh THIRD-PARTY-LICENSES.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            *.cdx.json
+            THIRD-PARTY-LICENSES.txt
+          if-no-files-found: error
+
+  release:
+    name: Release files
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+      - run: gh release upload "$GITHUB_REF_NAME" "$ASSET" *.cdx.json THIRD-PARTY-LICENSES.txt --clobber --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
