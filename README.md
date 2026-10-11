@@ -52,7 +52,9 @@ sudo apt install sigrok-firmware-fx2lafw fonts-dejavu-core
 files (`fx2lafw-saleae-logic.fw`, `fx2lafw-hantek-6022bl.fw`) into `/etc/awic/firmware`.
 
 **2. USB access without root.** The udev rules give the `plugdev` group the instruments, the USB
-hubs and the hubs' port-power switches:
+hubs and the hubs' port-power switches. As they are, the rules open every matching instrument and
+every hub's port power on the machine to the group. Use them only if you want that; otherwise
+adjust `99-awic.rules` to the devices and hubs AWIC should reach:
 
 ```sh
 curl -LO https://raw.githubusercontent.com/mrn2se/AgenticWebInstrumentControl/main/tools/udev/99-awic.rules
@@ -60,9 +62,12 @@ sudo cp 99-awic.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules 
 sudo usermod -aG plugdev $USER   # then log out and back in, and replug the instruments
 ```
 
-**3. Run.**
+**3. Download and run** the latest release. Or clone the repository and build it from source
+([docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#7-building-and-running-from-source)).
 
 ```sh
+mkdir awic && cd awic
+curl -LO https://github.com/mrn2se/AgenticWebInstrumentControl/releases/latest/download/awic-linux-x86_64
 chmod +x awic-linux-x86_64
 ./awic-linux-x86_64
 ```
