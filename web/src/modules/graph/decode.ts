@@ -183,15 +183,26 @@ export interface DigitalChannelLevels {
   readonly levels: readonly (0 | 1)[];
 }
 
-/** Splits encoding-2 packed-digital samples into one 0/1 level array per channel bit. */
+/**
+ * The channels a digital frame carries: `channels` when the caller knows them,
+ * else D0..D(channelCount-1). A byte keeps each channel on its own bit (SPEC
+ * §3.2: "bit n = channel Dn") while `channel_count` counts only the channels
+ * enabled, so with D5 and D7 enabled it is 2 and the data is on bits 5 and 7,
+ * not 0 and 1 - reading bits 0 and 1 drew nothing at all (#45).
+ */
+function frameChannels(channelCount: number, channels: readonly number[] | undefined): readonly number[] {
+  return channels ?? Array.from({ length: channelCount }, (_, ch) => ch);
+}
+
+/** Splits encoding-2 packed-digital samples into one 0/1 level array per channel - see `frameChannels` for which. */
 export function splitDigitalChannels(
   data: Extract<DecodedFrameData, { kind: "digital-raw" }>,
+  channels?: readonly number[],
 ): DigitalChannelLevels[] {
-  const channels: DigitalChannelLevels[] = [];
-  for (let ch = 0; ch < data.channelCount; ch++) {
-    channels.push({ channel: ch, levels: data.samples.map((byte) => digitalBit(byte, ch)) });
-  }
-  return channels;
+  return frameChannels(data.channelCount, channels).map((ch) => ({
+    channel: ch,
+    levels: data.samples.map((byte) => digitalBit(byte, ch)),
+  }));
 }
 
 export type BucketState = "low" | "high" | "toggled";
@@ -214,9 +225,10 @@ export interface DigitalChannelBuckets {
  */
 export function splitBitwiseChannels(
   data: Extract<DecodedFrameData, { kind: "digital-bitwise" }>,
+  channelNumbers?: readonly number[],
 ): DigitalChannelBuckets[] {
   const channels: DigitalChannelBuckets[] = [];
-  for (let ch = 0; ch < data.channelCount; ch++) {
+  for (const ch of frameChannels(data.channelCount, channelNumbers)) {
     const states: BucketState[] = data.and.map((andByte, i) => {
       const orByte = data.or[i];
       if (orByte === undefined) {

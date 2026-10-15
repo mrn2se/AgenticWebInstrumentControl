@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSampleFrame } from "./fixtures";
-import { frameToTraces, TraceAccumulator, type TraceContext } from "./traces";
+import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext } from "./traces";
 import type { Trace } from "../../render/types";
 import type { AnalogTrace, DigitalTrace } from "../../render/types";
 
@@ -153,5 +153,90 @@ describe("TraceAccumulator", () => {
     acc.add([analog([1], [2])]);
     expect(first[0].t).toEqual([0]);
     expect((acc.snapshot() as [AnalogTrace])[0].t).toEqual([0, 1]);
+  });
+});
+
+// #48: a 1.28 s capture streamed as 8 ms frames fell back to decimated frames
+// under backpressure, and each was drawn the length of the whole capture.
+// Scaled down: 1 kHz, 12 samples, 4-sample chunks, decimated to 2 buckets.
+describe("FrameSpanPlacer", () => {
+  const rateHz = 1000;
+  const raw = (sequence: number, t0Ms: number) =>
+    buildSampleFrame({ encoding: "packed-digital", channelCount: 1, sampleCount: 4, payload: [1, 1, 1, 1], sequence, t0Ns: BigInt(t0Ms) * 1_000_000n });
+  // Bucket 0: D0 high throughout; bucket 1: D0 toggled.
+  const decimated = (sequence: number, t0Ms: number) =>
+    buildSampleFrame({ encoding: "bitwise-digital", channelCount: 1, sampleCount: 2, payload: [0x01, 0x01, 0x00, 0x01], sequence, t0Ns: BigInt(t0Ms) * 1_000_000n });
+  const draw = (placed: readonly PlacedFrame[]) => {
+    const acc = new TraceAccumulator();
+    for (const { frame, spanSeconds } of placed) {
+      acc.add(frameToTraces(frame, ctx({ timebase: { rateHz, totalSamples: 12, frameSpanSeconds: spanSeconds } })));
+    }
+    return (acc.snapshot() as [DigitalTrace])[0].segments;
+  };
+  const close = (segments: readonly { t0: number; t1: number; state: string }[]) =>
+    segments.map((s) => ({ t0: +s.t0.toFixed(9), t1: +s.t1.toFixed(9), state: s.state }));
+
+  it("spreads each decimated frame over its own chunk, not the whole capture", () => {
+    const placer = new FrameSpanPlacer(rateHz);
+    const placed = [...placer.push(raw(0, 0)), ...placer.push(decimated(1, 4)), ...placer.push(decimated(2, 8)), ...placer.finish(0.012)];
+    expect(placed.map((p) => p.spanSeconds)).toEqual([undefined, 0.004, 0.004]);
+    // Ends with the capture at 12 ms; before the fix it ran on to 8 + 12 = 20 ms.
+    expect(close(draw(placed))).toEqual([
+      { t0: 0, t1: 0.006, state: "high" },
+      { t0: 0.006, t1: 0.008, state: "toggled" },
+      { t0: 0.008, t1: 0.01, state: "high" },
+      { t0: 0.01, t1: 0.012, state: "toggled" },
+    ]);
+  });
+
+  it("holds a decimated frame until the next one shows where it ends", () => {
+    const placer = new FrameSpanPlacer(rateHz);
+    expect(placer.push(decimated(0, 0))).toEqual([]);
+    const placed = placer.push(raw(1, 4));
+    expect(placed.map((p) => [p.frame.header.sequence, p.spanSeconds])).toEqual([[0, 0.004], [1, undefined]]);
+  });
+
+  it("does not stretch a decimated frame over a dropped one", () => {
+    const placer = new FrameSpanPlacer(rateHz);
+    placer.push(raw(0, 0));
+    placer.push(decimated(1, 4));
+    // Sequence 2 (8 ms) was dropped by the server: frame 1 still covers one 4 ms chunk.
+    expect(placer.push(decimated(3, 12)).map((p) => p.spanSeconds)).toEqual([0.004]);
+  });
+
+  it("still lets a capture sent as one decimated frame tile the whole capture", () => {
+    const placer = new FrameSpanPlacer(rateHz);
+    expect(placer.push(decimated(0, 0))).toEqual([]);
+    expect(placer.finish(0.012).map((p) => p.spanSeconds)).toEqual([0.012]);
+  });
+
+  it("places a decimated frame arriving after the end at once, within the end", () => {
+    const placer = new FrameSpanPlacer(rateHz);
+    placer.push(raw(0, 0));
+    expect(placer.finish(0.008)).toEqual([]);
+    expect(placer.push(decimated(1, 4)).map((p) => p.spanSeconds)).toEqual([0.004]);
+  });
+});
+
+// #45: with only D5 and D7 enabled the analyzer's frame says channel_count 2,
+// but the levels stay on bits 5 and 7 (SPEC §3.2: bit n = channel Dn).
+describe("frameToTraces with a subset of digital channels", () => {
+  const lanes = [5, 7];
+  const subset = ctx({ digitalChannels: lanes, laneForChannel: (channel) => lanes.indexOf(channel) });
+
+  it("reads each enabled channel from its own bit, not from bits 0..channelCount-1", () => {
+    // D5 high then low, D7 low then high; bits 0 and 1 stay 0.
+    const frame = buildSampleFrame({ encoding: "packed-digital", channelCount: 2, sampleCount: 2, payload: [1 << 5, 1 << 7] });
+    const traces = frameToTraces(frame, subset) as DigitalTrace[];
+    expect(traces.map((t) => [t.channel, t.lane])).toEqual([[5, 0], [7, 1]]);
+    expect(traces[0]!.segments.map((s) => s.state)).toEqual(["high", "low"]);
+    expect(traces[1]!.segments.map((s) => s.state)).toEqual(["low", "high"]);
+  });
+
+  it("does the same for a decimated bitwise frame", () => {
+    // One bucket: D5 high throughout (AND=OR=1), D7 toggled (AND 0, OR 1).
+    const frame = buildSampleFrame({ encoding: "bitwise-digital", channelCount: 2, sampleCount: 1, payload: [1 << 5, (1 << 5) | (1 << 7)] });
+    const traces = frameToTraces(frame, subset) as DigitalTrace[];
+    expect(traces.map((t) => [t.channel, t.segments[0]!.state])).toEqual([[5, "high"], [7, "toggled"]]);
   });
 });

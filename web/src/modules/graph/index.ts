@@ -42,7 +42,7 @@ import {
 } from "./device-activity";
 import { collisionNote, deviceDisplayLabel } from "./device-label";
 import { buildLayout, controlFromRecChannel, type AnalogChannelSettings } from "./panel-layout";
-import { frameToTraces, TraceAccumulator } from "./traces";
+import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext } from "./traces";
 import { identityCalibration } from "./scale";
 import { cursorReadout } from "./cursors";
 import { formatSiDuration, formatSiFrequency } from "../../format";
@@ -267,6 +267,10 @@ class GraphModule extends AwicModule {
    */
   private streamTraces = new TraceAccumulator();
   private streamTracesFor: number | null = null;
+  /** Holds each decimated frame until the time it covers is known (#48). */
+  private streamPlacer = new FrameSpanPlacer(0);
+  /** Whether anything of the capture on screen has been handed to the renderer yet. */
+  private streamDrawn = false;
   /** A redraw of `streamTraces` already scheduled; frames arriving meanwhile join it. */
   private streamDrawTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -547,6 +551,10 @@ class GraphModule extends AwicModule {
         if (event.event === "acq.state") {
           this.acqState = applyAcqStateEvent(this.acqState, event);
           this.renderAcqStatus();
+          // The capture's end places a decimated last frame still held (#48).
+          if (event.stream === this.streamTracesFor && (event.state === "stopped" || event.state === "error")) {
+            this.addStreamFrames(this.streamPlacer.finish(this.captureT0Seconds + this.streamTimebaseSeconds()));
+          }
         } else if (event.event === "rec.state") {
           // Any recording, not only this tab's: one an agent or another tab
           // starts or stops holds the selected device just the same (B-31).
@@ -556,40 +564,20 @@ class GraphModule extends AwicModule {
     );
     this.unsubscribers.push(
       this.ctx.ws.frames.on((frame) => {
-        const renderer = this.renderer;
-        if (this.mode !== "single" || frame.header.streamId !== this.acqState.streamId || !renderer) return;
-        const enabled = this.channelState.filter((c) => c.enabled);
-        const firstFrame = this.streamTracesFor !== frame.header.streamId;
-        // The same origin the traces are placed at, so the frame list and the
-        // plot share one axis (B-71) - the capture's first frame, where its
-        // decoded annotations count from, not whichever frame came last.
-        if (firstFrame) this.captureT0Seconds = Number(frame.header.t0Ns) / 1e9;
-        const frameTraces = frameToTraces(frame, {
-          // The driver's effective configuration, never the request: the
-          // hardware may run a different rate than was asked for.
-          timebase: {
-            rateHz: this.effective?.cfg.rate_hz ?? this.currentRateHz(),
-            totalSamples: this.effective?.cfg.samples ?? this.currentSamples(),
-          },
-          calibrationForChannel: (channel) =>
-            this.effective?.calibration.find((c) => c.channel === channel) ?? identityCalibration(channel),
-          labelForChannel: (_kind, channel) => enabled.find((c) => c.control.channel === channel)?.control.label ?? `CH${channel}`,
-          laneForChannel: (channel) => enabled.findIndex((c) => c.control.channel === channel),
-        });
-        if (firstFrame) {
+        if (this.mode !== "single" || frame.header.streamId !== this.acqState.streamId || !this.renderer) return;
+        if (this.streamTracesFor !== frame.header.streamId) {
+          // The same origin the traces are placed at, so the frame list and the
+          // plot share one axis (B-71) - the capture's first frame, where its
+          // decoded annotations count from, not whichever frame came last.
+          this.captureT0Seconds = Number(frame.header.t0Ns) / 1e9;
           this.cancelStreamDraw();
           this.streamTraces = new TraceAccumulator();
+          this.streamPlacer = new FrameSpanPlacer(this.streamRateHz());
           this.streamTracesFor = frame.header.streamId;
           this.streamViewFollows = true;
-          this.streamTraces.add(frameTraces);
-          renderer.setTraces({ traces: frameTraces });
-          return;
+          this.streamDrawn = false;
         }
-        this.streamTraces.add(frameTraces);
-        // Redrawing everything received so far on every frame is quadratic in
-        // a slow capture's hundreds of small frames; one redraw per 100 ms
-        // keeps the picture current, and the last one shows the whole capture.
-        this.streamDrawTimer ??= setTimeout(() => this.drawStreamTraces(frame.header.streamId), 100);
+        this.addStreamFrames(this.streamPlacer.push(frame));
       }),
     );
     this.unsubscribers.push(
@@ -1106,6 +1094,55 @@ class GraphModule extends AwicModule {
     } catch {
       // Surfaced centrally via ws.errors.
     }
+  }
+
+  /** The driver's effective configuration, never the request: the hardware may run a different rate than was asked for. */
+  private streamRateHz(): number {
+    return this.effective?.cfg.rate_hz ?? this.currentRateHz();
+  }
+
+  /** How long the configured capture lasts, seconds. */
+  private streamTimebaseSeconds(): number {
+    const rateHz = this.streamRateHz();
+    return rateHz > 0 ? (this.effective?.cfg.samples ?? this.currentSamples()) / rateHz : 0;
+  }
+
+  private streamTraceContext(frameSpanSeconds: number | undefined): TraceContext {
+    const enabled = this.channelState.filter((c) => c.enabled);
+    return {
+      timebase: {
+        rateHz: this.streamRateHz(),
+        totalSamples: this.effective?.cfg.samples ?? this.currentSamples(),
+        frameSpanSeconds,
+      },
+      calibrationForChannel: (channel) =>
+        this.effective?.calibration.find((c) => c.channel === channel) ?? identityCalibration(channel),
+      labelForChannel: (_kind, channel) => enabled.find((c) => c.control.channel === channel)?.control.label ?? `CH${channel}`,
+      laneForChannel: (channel) => enabled.findIndex((c) => c.control.channel === channel),
+      digitalChannels: enabled.filter((c) => isDigitalControl(c.control)).map((c) => c.control.channel),
+    };
+  }
+
+  /** Adds placed frames to the capture on screen and draws it - at once the first time, then one redraw per 100 ms. */
+  private addStreamFrames(placed: readonly PlacedFrame[]): void {
+    const renderer = this.renderer;
+    const streamId = this.streamTracesFor;
+    if (placed.length === 0 || !renderer || streamId === null || this.mode !== "single") return;
+    for (const { frame, spanSeconds } of placed) this.streamTraces.add(frameToTraces(frame, this.streamTraceContext(spanSeconds)));
+    if (!this.streamDrawn) {
+      this.streamDrawn = true;
+      renderer.setTraces({ traces: this.streamTraces.snapshot() });
+      // A renderer's first-ever `setTraces` fits itself and reports that as a
+      // viewport change, read as the user zooming - on a fresh page the view
+      // then stayed on the first 8 ms frame of a 1.28 s capture. Nothing the
+      // user did yet: keep widening (`primeLiveViewport` is Live's answer).
+      this.streamViewFollows = true;
+      return;
+    }
+    // Redrawing everything received so far on every frame is quadratic in
+    // a slow capture's hundreds of small frames; one redraw per 100 ms
+    // keeps the picture current, and the last one shows the whole capture.
+    this.streamDrawTimer ??= setTimeout(() => this.drawStreamTraces(streamId), 100);
   }
 
   private cancelStreamDraw(): void {
