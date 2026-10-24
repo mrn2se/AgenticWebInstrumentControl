@@ -28,7 +28,7 @@ RUN cargo build --release \
  && test -s web/src/proto/types.ts
 
 # ---- Stage 2: Frontend ----
-FROM node:22-trixie-slim AS web
+FROM node:26-trixie-slim AS web
 WORKDIR /web
 COPY web/ .
 # Generated wire types from the Rust stage — not in source control.
