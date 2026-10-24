@@ -20,8 +20,11 @@ updates:
         patterns:
           - "*"
 
-  # Base images in the root Containerfile
+  # Base images in the Containerfiles
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/tools/visa"
+      - "/web/e2e"
     schedule:
       interval: "weekly"
