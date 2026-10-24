@@ -73,7 +73,9 @@ impl DeviceWatcher for NetlinkWatcher {
 
 async fn run(tx: mpsc::UnboundedSender<UsbEvent>) -> io::Result<()> {
     let socket = open_socket()?;
-    let async_fd = AsyncFd::new(socket)?;
+    // SAFETY: `socket` is an `OwnedFd`: the fd it holds stays open and
+    // unchanged until the `AsyncFd` drops it.
+    let async_fd = unsafe { AsyncFd::register(socket) }?;
     let mut buf = [0u8; RECV_BUFFER_LEN];
 
     loop {
