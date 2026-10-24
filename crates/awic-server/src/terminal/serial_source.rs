@@ -277,7 +277,9 @@ fn open_and_configure(path: &Path, settings: &SerialSettings) -> std::io::Result
     }
 
     configure_termios(&fd, settings)?;
-    AsyncFd::new(fd)
+    // SAFETY: `fd` is an `OwnedFd`: the fd it holds stays open and unchanged
+    // until the `AsyncFd` drops it.
+    Ok(unsafe { AsyncFd::register(fd) }?)
 }
 
 fn configure_termios(fd: &OwnedFd, settings: &SerialSettings) -> std::io::Result<()> {
