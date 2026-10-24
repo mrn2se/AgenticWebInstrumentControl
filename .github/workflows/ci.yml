@@ -46,7 +46,7 @@ jobs:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # rustup reads rust-toolchain.toml (pinned version, rustfmt, clippy).
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
@@ -58,7 +58,7 @@ jobs:
     name: Audit dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -66,7 +66,7 @@ jobs:
       # --deny warnings also fails on crates marked unmaintained, unsound
       # or yanked. A reviewed exception goes in .cargo/audit.toml.
       - run: cargo audit --deny warnings
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -83,13 +83,13 @@ jobs:
     name: Web (typecheck, test, build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - name: Generate wire types (ts-rs)
         run: |
           cargo test --locked -p awic-proto export_bindings
           test -s web/src/proto/types.ts
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -114,8 +114,8 @@ jobs:
     needs: [rust, web, audit]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
@@ -183,7 +183,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ env.ASSET }}
       - run: gh release upload "$GITHUB_REF_NAME" "$ASSET" *.cdx.json THIRD-PARTY-LICENSES.txt --clobber --repo "$GITHUB_REPOSITORY"
