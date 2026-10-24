@@ -61,7 +61,7 @@ embed-web = ["dep:rust-embed"]
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 # Bench recordings (`testdata/bench/`) for tests and `examples/record_fixture.rs`.
 awic-core = { workspace = true, features = ["fixtures"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
