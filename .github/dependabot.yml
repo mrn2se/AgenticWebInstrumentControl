@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Rust workspace (Cargo.toml / Cargo.lock at the repo root)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo:
+        patterns:
+          - "*"
+
+  # Web frontend (web/package.json / package-lock.json)
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm:
+        patterns:
+          - "*"
+
+  # Base images in the Containerfiles
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/tools/visa"
+      - "/web/e2e"
+    schedule:
+      interval: "weekly"
