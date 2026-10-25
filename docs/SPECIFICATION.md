@@ -826,6 +826,10 @@ interface WaveformRenderer {
   mount(el: HTMLElement, layout: Layout): void;
   setTraces(traces: TraceSet): void;
   setViewport(t0: number, t1: number): void;
+  /** Where a triggered capture fired: a "T" on the time axis, a level line on an analog lane. */
+  setTrigger(marker: { t: number; channel: number; levelV: number | null } | null): void;
+  /** How far user zoom/pan may reach; null = the traces' own extent (live: the retained span). */
+  setTimeLimits(range: { t0: number; t1: number } | null): void;
   /** User zoom/pan; live mode turns it into rec.view.update (§5.5). */
   onViewportChange(cb: (t0: number, t1: number) => void): () => void;
   setTheme(colors: ThemeColors): void;
@@ -849,9 +853,29 @@ The WebGL2 renderer, `render/webgl2.ts`, no dependencies:
   digital lanes as level lines with vertical edges, and `toggled` segments as a filled band —
   never as a level (§3.2).
 - **Axes, grid and labels** on a 2D canvas overlaid on the GL canvas: time in SI units
-  (ns/µs/ms/s), volts per analog panel, channel names per lane.
-- **Interaction**: wheel zooms time about the cursor, drag pans, double-click fits; each change is
-  reported through `onViewportChange`. Cursors are vertical rules the graph module owns.
+  (ns/µs/ms/s); per analog lane a dashed grid line and a volt label at each division (about one
+  per 28 px of lane height) and the scale next to the channel name (`CH1 · 1 V/div`); channel names
+  per lane. Every label sits on a backdrop of the plot background, so a trace crossing it never
+  makes it unreadable.
+- **Trigger marker**: a triggered Single capture started from this tab shows a "T" flag at the top
+  of the plot at the trigger time (the capture midpoint); a capture started elsewhere (an agent,
+  another tab) shows none, since its trigger is not known here. The flag comes with a faint line
+  through all lanes, and on an analog trigger channel a dashed line at the trigger level,
+  labelled at the right edge. Plotly does not draw it.
+- **Interaction**: the wheel and a trackpad pinch zoom time about the cursor (Ctrl+wheel on a
+  mouse at the wheel's rate; only small pixel deltas get the steeper pinch response); a sideways swipe or
+  Shift+wheel pans, as does dragging; double-click fits. Wheel deltas reported in lines or pages
+  are converted to pixels first, so a line-mode mouse zooms as fast as a pixel-mode one. Zoom-out
+  stops at the fit-all view and a pan cannot push the data off screen: at least half of the
+  visible window always shows data (in Live mode, data of the recording's retained span, whose
+  newest end advances with every drawn frame, so history stays reachable).
+  `setViewport()` itself is not limited. Each user change is reported through
+  `onViewportChange`. Cursors are vertical rules the graph module owns.
+- **Fit on a new capture**: the first frame of every new Single capture sets the viewport to that
+  capture, whatever was on screen before (an earlier capture, or Live), so a capture that arrives
+  in one frame is never drawn off screen.
+- **Empty plot**: until the first data arrives the plot says what to do (pick a device and press
+  Start), instead of showing a blank area.
 - Device-pixel-ratio aware; sized by a `ResizeObserver` on a container whose height is definite
   (the Plotly growth bug, §11.3) — the renderer never derives its container's height from content.
 - Draws only on change (new traces, viewport, resize, theme), coalesced to one frame per
@@ -869,7 +893,12 @@ The graph runs in one of two modes, chosen in the toolbar:
 
 In Live mode, zooming or panning **pauses following** without pausing the recording: the view
 switches to a fixed range served from history (`rec.view.update`), and a *Follow* button resumes
-the tail. The toolbar shows the retained span and the memory in use, so a user can see how far
+the tail. View frames still in flight for the view just left (a follow frame after a pause, a
+fixed-range frame after *Follow*; the header's follow flag tells them apart) are skipped for up
+to 2 s, so the old traces stay on screen, scaled, until the new range arrives — the plot never
+blanks while zooming. If frames still carry the old flag after that, the view change is sent
+again, those frames are drawn meanwhile, and the status line says so. *Follow*, *Snapshot* and *Trigger* are always on the toolbar and disabled, with a tooltip
+saying why, when they do not apply. The toolbar shows the retained span and the memory in use, so a user can see how far
 back they can scroll. *Snapshot* turns the visible range into a capture (§2.8.5) for measurements.
 A pattern search box (§2.9) lists matches as clickable timestamps that jump the view.
 
@@ -881,6 +910,16 @@ plausible and unflagged.
 
 Analog: Vpp, Vmin, Vmax, Vavg, Vrms, frequency, period, duty, rise/fall.
 Digital: frequency, period, duty, pulse width, edge count.
+
+**In the Graph tab's side panel** results are grouped in one block per capture, newest first,
+each headed with when the capture was taken, its sample rate and its length
+(`Capture 14:03:22 · 1 MS/s · 10 000 samples`, or `Snapshot …`). Measuring the same channel of
+the same capture again replaces its rows. Once another capture is on screen, the older blocks are
+dimmed and marked *previous capture*; *Clear* empties the panel. Values use SI prefixes the way
+the time axis does (`1.000 ms`, `819 ns`, `1.000 kHz`): 4 significant digits for frequency and
+period, 3 for edge times and pulse widths. Volts are rounded to the channel's resolution (one ADC
+step, from its calibration), so an 8-bit converter on ±5 V reads `2.00 V`, not `2.00000 V`;
+duty to a tenth of a percent; counts as integers.
 
 **Nothing analog is timed inside the noise floor.** Edge detection is hysteresis-based, but the
 dead band scales with the waveform's own span, so on a flat input it shrinks with the noise and
@@ -1416,7 +1455,11 @@ one-line summary (the arguments, or the error message). A row expands to the req
 as pretty-printed JSON, each cut at 64 KB. Pictures a result carried (`render_view`) are lifted
 out of the response text, replaced there by a placeholder, and shown as thumbnails under their
 row whether it is expanded or not; a click enlarges one. Filters: free text, session, errors
-only, screenshots only; *Follow* keeps the newest row in view.
+only, screenshots only; *Follow* keeps the newest row in view. *Follow* tracks the scroll position
+the way a terminal does (only scrolls the user makes count, not the browser re-clamping the
+position after a filter hides rows): scrolling up to read an older row unticks it, so new messages no longer
+pull the view down; scrolling back to the bottom ticks it again. Changing a filter, a screenshot
+finishing loading and returning to the tab all keep the newest row in view while it is ticked.
 
 **Memory.** Sessions and their counters are always tracked (bounded by §8.1's 32 sessions plus 16
 ended). The message log is what costs memory, so it has two switches — *Log messages* and *Keep
@@ -1631,14 +1674,31 @@ The main element — plot or terminal — owns the viewport; configuration moves
 - One **toolbar row** per module under the tab bar: device, mode (Single/Live), run/stop, and
   buttons that open **popovers** for settings (channels and ranges, trigger, acquisition,
   renderer). Popovers close on Escape and outside click; they never push the plot down.
-- Measurements and search results live in a **collapsible side panel**, closed by default on narrow
-  screens.
-- **No page scroll** at 1280×720 or larger: the plot fills the remaining height, always from a
-  definite-height container (the Plotly growth bug).
+- **The toolbar keeps its shape.** Nothing on it appears, disappears or changes width with state,
+  so the plot never jumps and no button slides under the pointer: the status is a fixed slot
+  (state on the first line, the Live retention line on the second; cut text in a tooltip),
+  buttons that do not apply are disabled rather than removed, the device note is an ⓘ icon with
+  the note as its tooltip, and the dropped-frames warning floats over the plot. Sample rates are
+  labelled in samples per second (`16 MS/s`, `62.5 kS/s`).
+- Measurements and search results live in a **collapsible side panel**. Below 900 px window width
+  it is closed and, when opened, is a drawer over the plot's right edge instead of a column
+  beside it. Narrowing past that width closes it; widening again restores whatever the *Panel*
+  button last chose on a wide window.
+- **No page scroll** at any size: the app is exactly the viewport's height, every tab scrolls
+  inside its own pane (the USB tree included), and the plot fills the remaining height, always
+  from a definite-height container (the Plotly growth bug).
+- **Narrow windows**: in the header the connection status shrinks to its dot and the theme
+  buttons to one letter (full names in tooltips) before the tab bar gives up any room, so every
+  tab stays visible.
 - Status (connection, recording span, memory) is compact text in the header, not a panel.
+- The **AWIC** name at the left of the header is a button that opens a small About dialog (a
+  native `<dialog>`: Escape, Close or a click outside closes it) with a one-paragraph description,
+  the project link and the GitHub Discussions link for questions and problems.
 - The USB tree stays a full page; it is a list, not an instrument view.
 - The MCP tab (§8.5) is two columns that each scroll on their own: connection, sessions and
-  logging on the left, the message log on the right.
+  logging on the left, the message log on the right. Below 768 px the setup column stacks above
+  the log (at most half the height) and *Hide setup* folds it away; the log rows drop the session
+  and duration columns.
 
 ## 12. Security model (Q-08, R-01)
 

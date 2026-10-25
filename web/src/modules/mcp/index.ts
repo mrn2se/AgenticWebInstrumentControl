@@ -10,6 +10,7 @@ import {
   formatBytes,
   formatClock,
   formatDuration,
+  isAtBottom,
   matchesFilter,
   plural,
   type LogFilter,
@@ -29,6 +30,9 @@ const BADGE = "rounded px-1.5 py-px text-[11px] font-semibold";
 const BADGE_OK = "bg-awic-ok-bg text-awic-ok";
 const BADGE_ERR = "bg-awic-danger-bg text-awic-danger";
 const BADGE_INFO = "bg-awic-bg text-awic-fg-muted";
+
+/** How long after a wheel, touch or key on the log a `scroll` event still counts as the user's. Smooth scrolling runs a few hundred ms. */
+const USER_SCROLL_WINDOW_MS = 600;
 
 /** Coalesces bursts of `mcp.activity` (an agent calling tools back to back). */
 const FETCH_DEBOUNCE_MS = 200;
@@ -116,6 +120,10 @@ class McpModule extends AwicModule {
   private activeSnippet = "vscode";
 
   private active = false;
+  /** When the user last wheeled, touched or pressed a key on the log (`performance.now()` ms). */
+  private lastScrollIntentMs = -Infinity;
+  /** A pointer went down on the log (a scrollbar drag, say) and has not come up yet. */
+  private pointerOnLog = false;
   private dirtyLog = true;
   private dirtyStatus = true;
   private fetchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -126,15 +134,15 @@ class McpModule extends AwicModule {
   private unsubConnection: (() => void) | null = null;
 
   protected override onInit(): void {
-    // The shell's #app only has a *minimum* height, so a module's own
-    // content height can push the page past the viewport (SPEC §11.3: no
-    // page scroll). The panels are laid out on an absolutely positioned
-    // layer, leaving this element no intrinsic height: it takes exactly the
-    // space the shell gives it, and the two columns scroll inside it.
+    // The panels are laid out on an absolutely positioned layer, leaving
+    // this element no intrinsic height: it takes exactly the space the shell
+    // gives it, and the columns scroll inside it (SPEC §11.3: no page
+    // scroll). On a narrow window the sidebar stacks above the log instead
+    // of beside it, at most half the height, and can be folded away.
     this.className = "relative block min-h-0 flex-1 overflow-hidden";
     this.innerHTML = `
-      <div class="absolute inset-0 flex">
-      <aside class="flex w-[25rem] flex-none flex-col gap-5 overflow-y-auto border-r border-awic-border bg-awic-bg-raised p-4">
+      <div class="absolute inset-0 flex flex-col md:flex-row">
+      <aside id="mcp-sidebar" class="flex max-h-[50%] w-full flex-none flex-col gap-5 overflow-y-auto border-b border-awic-border bg-awic-bg-raised p-4 md:max-h-none md:w-[25rem] md:border-b-0 md:border-r">
         <section class="${SECTION}">
           <h3 class="${HEADING}">Connection</h3>
           <div class="flex items-center gap-2">
@@ -167,9 +175,10 @@ class McpModule extends AwicModule {
           <p class="m-0 text-xs text-awic-fg-muted">Sessions and call counts are tracked either way; only the message log uses memory, and it never grows past its limit (<code>[mcp].log_memory_mb</code>) — the oldest entries go first.</p>
         </section>
       </aside>
-      <div class="flex min-w-0 flex-1 flex-col">
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col">
         <div class="flex flex-none flex-wrap items-center gap-3 border-b border-awic-border bg-awic-bg-raised px-4 py-2">
-          <input id="filter-text" type="search" placeholder="Filter tool, client, arguments…" class="${INPUT} w-64" />
+          <button id="sidebar-toggle" type="button" class="${BUTTON} md:hidden" aria-controls="mcp-sidebar" aria-expanded="true">Hide setup</button>
+          <input id="filter-text" type="search" placeholder="Filter tool, client, arguments…" class="${INPUT} w-full min-w-0 sm:w-64" />
           <select id="filter-session" class="${INPUT}"><option value="">All sessions</option></select>
           <label class="flex items-center gap-1.5 text-sm"><input id="filter-errors" type="checkbox" /> Errors</label>
           <label class="flex items-center gap-1.5 text-sm"><input id="filter-images" type="checkbox" /> Screenshots</label>
@@ -229,7 +238,39 @@ class McpModule extends AwicModule {
     this.followEl.addEventListener("change", () => {
       if (this.followEl.checked) this.scrollToEnd();
     });
+    // Follow tracks where the user scrolls the log: up to read unticks it,
+    // so the next message does not yank the view back down; the bottom ticks
+    // it again. Only scrolls the user makes count — the browser also fires
+    // `scroll` when it clamps the position after a filter hides rows, and
+    // that must not tick Follow behind the user's back.
+    const markIntent = (): void => {
+      this.lastScrollIntentMs = performance.now();
+    };
+    for (const type of ["wheel", "touchmove", "keydown"] as const) {
+      this.logEl.addEventListener(type, markIntent, { passive: true });
+    }
+    this.logEl.addEventListener("pointerdown", () => {
+      this.pointerOnLog = true;
+    });
+    window.addEventListener("pointerup", () => {
+      if (this.pointerOnLog) markIntent(); // the scroll a scrollbar drag ends with
+      this.pointerOnLog = false;
+    });
+    this.logEl.addEventListener("scroll", () => {
+      const userScroll = this.pointerOnLog || performance.now() - this.lastScrollIntentMs < USER_SCROLL_WINDOW_MS;
+      if (!userScroll) return;
+      this.followEl.checked = isAtBottom(this.logEl.scrollTop, this.logEl.scrollHeight, this.logEl.clientHeight);
+    });
     this.requireEl("#viewer-close").addEventListener("click", () => this.viewerEl.close());
+    const sidebar = this.requireEl("#mcp-sidebar");
+    const sidebarToggle = this.requireEl<HTMLButtonElement>("#sidebar-toggle");
+    sidebarToggle.addEventListener("click", () => {
+      // `max-md:hidden` only folds it on a narrow window; a wide one always
+      // shows it beside the log, whatever this was left at.
+      const folded = sidebar.classList.toggle("max-md:hidden");
+      sidebarToggle.textContent = folded ? "Show setup" : "Hide setup";
+      sidebarToggle.setAttribute("aria-expanded", String(!folded));
+    });
     this.viewerEl.addEventListener("click", (e) => {
       if (e.target === this.viewerEl) this.viewerEl.close();
     });
@@ -260,6 +301,9 @@ class McpModule extends AwicModule {
     this.dirtyLog = true;
     this.scheduleFetch(0);
     this.agoTimer = setInterval(() => this.renderSessions(), 5000);
+    // Messages that arrived while the tab was hidden were appended without
+    // a scroll (a hidden element has no layout to scroll).
+    if (this.followEl.checked) requestAnimationFrame(() => this.scrollToEnd());
   }
 
   override deactivate(): void {
@@ -503,6 +547,7 @@ class McpModule extends AwicModule {
       if (row) row.hidden = !matchesFilter(entry, filter);
     }
     this.renderCount();
+    if (this.followEl.checked) this.scrollToEnd();
   }
 
   private renderCount(): void {
@@ -533,10 +578,10 @@ class McpModule extends AwicModule {
     badgeCell.append(status);
     summary.append(
       el("span", "w-24 flex-none font-mono text-xs text-awic-fg-muted", formatClock(entry.t_ms)),
-      el("code", "w-[4.5rem] flex-none text-xs text-awic-fg-muted", entry.session ?? "—"),
-      el("span", "w-44 flex-none truncate font-medium", entryTitle(entry)),
+      el("code", "hidden w-[4.5rem] flex-none text-xs text-awic-fg-muted sm:inline", entry.session ?? "—"),
+      el("span", "w-28 flex-none truncate font-medium sm:w-44", entryTitle(entry)),
       badgeCell,
-      el("span", "w-16 flex-none text-right text-xs text-awic-fg-muted", formatDuration(entry.duration_ms)),
+      el("span", "hidden w-16 flex-none text-right text-xs text-awic-fg-muted sm:inline", formatDuration(entry.duration_ms)),
       el("span", `min-w-0 flex-1 truncate font-mono text-xs ${entry.is_error ? "text-awic-danger" : "text-awic-fg-muted"}`, entry.summary),
     );
     if (entry.images.length > 0) {
@@ -565,7 +610,7 @@ class McpModule extends AwicModule {
   }
 
   private thumbnails(entry: McpLogEntry): HTMLElement {
-    const strip = el("div", "flex flex-wrap gap-2 px-4 pb-2 pl-[13.5rem]");
+    const strip = el("div", "flex flex-wrap gap-2 px-4 pb-2 sm:pl-[13.5rem]");
     entry.images.forEach((info, index) => {
       if (!info.kept) {
         strip.append(
@@ -577,6 +622,11 @@ class McpModule extends AwicModule {
       img.alt = `Screenshot ${index + 1} of ${entryTitle(entry)}`;
       img.title = `${info.mime_type}, ${formatBytes(info.bytes)} — click to enlarge`;
       img.loading = "lazy";
+      // A picture is taller once it has loaded, which is after the log was
+      // scrolled to its end: scroll again, or the log stops short of it.
+      img.addEventListener("load", () => {
+        if (this.followEl.checked) this.scrollToEnd();
+      });
       void this.loadImage(entry.seq, index)
         .then((url) => {
           img.src = url;

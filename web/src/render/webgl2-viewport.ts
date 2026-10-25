@@ -78,3 +78,87 @@ export function fitAllViewport(bounds: Viewport, paddingFraction = 0.02): Viewpo
   const pad = span > 0 ? span * paddingFraction : 1;
   return { t0: bounds.t0 - pad, t1: bounds.t1 + pad };
 }
+
+/**
+ * Keeps a user zoom or pan inside the data: the span never grows past
+ * `extent`'s fit-all view, and the window slides back so that at least half
+ * of it shows data. The margin allowed past either edge is the fit-all
+ * padding or half the visible span, whichever is smaller — a fixed margin
+ * let a deeply zoomed view rest entirely in the padding, showing nothing.
+ * `extent` is the data's own time range; a `null` extent (nothing drawn
+ * yet) leaves the viewport as it is.
+ */
+export function clampViewport(viewport: Viewport, extent: Viewport | null): Viewport {
+  if (!extent) return viewport;
+  const fit = fitAllViewport(extent);
+  const maxSpan = fit.t1 - fit.t0;
+  const span = Math.min(viewport.t1 - viewport.t0, maxSpan);
+  if (!(span > 0)) return viewport;
+  const margin = Math.min(extent.t0 - fit.t0, span / 2);
+  const lo = extent.t0 - margin;
+  const hi = extent.t1 + margin;
+  let t0 = viewport.t0;
+  if (t0 < lo) t0 = lo;
+  if (t0 + span > hi) t0 = hi - span;
+  return { t0, t1: t0 + span };
+}
+
+/** CSS pixels per wheel "line" (`deltaMode === 1`), about one line of text — what browsers scroll a page by per notch. */
+const WHEEL_LINE_PX = 16;
+
+/**
+ * A wheel delta in CSS pixels whatever unit the browser reported it in:
+ * pixels (`deltaMode` 0, most trackpads and Chrome), lines (1, Firefox on
+ * Linux with many mice, about 3 per notch) or pages (2). Without this a
+ * line-mode notch moved the view by a fraction of a percent.
+ */
+export function wheelDeltaPixels(delta: number, deltaMode: number, pagePx: number): number {
+  if (deltaMode === 1) return delta * WHEEL_LINE_PX;
+  if (deltaMode === 2) return delta * Math.max(pagePx, 1);
+  return delta;
+}
+
+export interface WheelInput {
+  /** Both already in CSS pixels (`wheelDeltaPixels`). */
+  readonly dx: number;
+  readonly dy: number;
+  readonly shiftKey: boolean;
+  /** Set by browsers for a trackpad pinch as well as Ctrl+wheel. */
+  readonly ctrlKey: boolean;
+  /** Whether the browser reported the deltas in pixels (`deltaMode === 0`); a pinch always is. */
+  readonly pixelDeltas: boolean;
+}
+
+/** A pinch reports deltas of a few pixels; a mouse wheel notch with Ctrl held reports ~100 (Chrome) or lines. */
+const PINCH_MAX_DELTA_PX = 50;
+
+export type WheelAction =
+  | { readonly kind: "zoom"; readonly factor: number }
+  | { readonly kind: "pan"; readonly px: number }
+  | { readonly kind: "none" };
+
+/**
+ * What one wheel event does to the time axis. Pinch (Ctrl) and a plain
+ * vertical wheel zoom about the pointer; a horizontal swipe, or Shift+wheel,
+ * pans. A trackpad swipe reports both axes at once, so the larger one
+ * decides — zooming and panning on the same diagonal gesture is unreadable.
+ */
+export function wheelAction(input: WheelInput): WheelAction {
+  const { dx, dy } = input;
+  if (input.ctrlKey && input.pixelDeltas && Math.abs(dy) < PINCH_MAX_DELTA_PX) {
+    // A pinch reports small deltas many times a second; it needs a steeper
+    // response than a wheel notch to feel the same. Ctrl+wheel on a mouse
+    // falls through to the plain wheel's gain below.
+    return dy === 0 ? { kind: "none" } : { kind: "zoom", factor: Math.exp(dy * 0.01) };
+  }
+  if (input.ctrlKey) return dy === 0 ? { kind: "none" } : { kind: "zoom", factor: Math.exp(dy * 0.002) };
+  if (input.shiftKey) {
+    // Some browsers already turn Shift+wheel into a horizontal delta.
+    const px = dx !== 0 ? dx : dy;
+    return px === 0 ? { kind: "none" } : { kind: "pan", px };
+  }
+  if (Math.abs(dx) > Math.abs(dy)) return { kind: "pan", px: dx };
+  // dy > 0 (scroll down) zooms out; a smooth exponential response feels
+  // closer to a real scope's knob than a fixed step.
+  return dy === 0 ? { kind: "none" } : { kind: "zoom", factor: Math.exp(dy * 0.002) };
+}

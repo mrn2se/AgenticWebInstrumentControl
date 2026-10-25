@@ -36,6 +36,12 @@ class FakeRenderer implements WaveformRenderer {
   setAnnotations(_lanes: readonly AnnotationLane[]): void {
     // Not exercised by these registry tests.
   }
+  setTrigger(): void {
+    // Not exercised by these registry tests.
+  }
+  setTimeLimits(): void {
+    // Not exercised by these registry tests.
+  }
   setViewport(t0: number, t1: number): void {
     this.lastViewport = { t0, t1 };
   }

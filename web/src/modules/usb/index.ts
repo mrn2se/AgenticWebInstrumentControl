@@ -110,7 +110,9 @@ class UsbTreeModule extends AwicModule {
   private terminalSources: readonly TerminalSourceInfo[] = [];
 
   protected override onInit(): void {
-    this.className = "block flex-1 overflow-auto p-6";
+    // `min-h-0`: as a flex child its minimum height is otherwise its
+    // content's, and a tall tree grew the page instead of scrolling here.
+    this.className = "block min-h-0 flex-1 overflow-auto p-6";
     this.innerHTML = `
       <div class="mb-3 flex items-center justify-between gap-4">
         <h2 class="text-xl font-semibold">USB devices</h2>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSiDuration, formatSiFrequency } from "./format";
+import { formatSampleRate, formatSi, formatSiDuration, formatSiFrequency } from "./format";
 
 describe("formatSiDuration (SI units, not '0.0019 s')", () => {
   it("formats a sub-millisecond value in milliseconds, not seconds", () => {
@@ -46,5 +46,36 @@ describe("formatSiFrequency (avoids exponential notation like '1.000e+6')", () =
 
   it("formats zero", () => {
     expect(formatSiFrequency(0)).toBe("0.000 Hz");
+  });
+});
+
+describe("formatSi", () => {
+  it("picks a prefix and keeps the significant digits", () => {
+    expect(formatSi(0.001, "s", 4)).toBe("1.000 ms");
+    expect(formatSi(8.18705e-7, "s", 3)).toBe("819 ns");
+    expect(formatSi(1.64226e-7, "s", 3)).toBe("164 ns");
+    expect(formatSi(1000, "Hz", 4)).toBe("1.000 kHz");
+    expect(formatSi(2.5, "V", 3)).toBe("2.50 V");
+  });
+
+  it("rounds before choosing the prefix", () => {
+    expect(formatSi(0.00099996, "s", 4)).toBe("1.000 ms");
+  });
+
+  it("keeps the sign", () => {
+    expect(formatSi(-0.0123, "V", 3)).toBe("-12.3 mV");
+  });
+
+  it("formats zero without a prefix", () => {
+    expect(formatSi(0, "V", 3)).toBe("0.00 V");
+  });
+});
+
+describe("formatSampleRate", () => {
+  it("labels rates in samples per second, without trailing zeros", () => {
+    expect(formatSampleRate(16_000_000)).toBe("16 MS/s");
+    expect(formatSampleRate(20_000)).toBe("20 kS/s");
+    expect(formatSampleRate(62_500)).toBe("62.5 kS/s");
+    expect(formatSampleRate(500)).toBe("500 S/s");
   });
 });

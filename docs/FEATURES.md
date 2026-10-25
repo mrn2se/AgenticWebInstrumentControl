@@ -171,9 +171,21 @@ readable answer instead of a client timeout.
 ## Web UI (M2–M15)
 
 - Vanilla TypeScript and web components, no framework. Tabs: USB, Graph, Terminal, MCP.
+- Clicking **AWIC** in the header opens an About dialog: what AWIC is, a link to the project on
+  GitHub, and GitHub Discussions as the place for questions, ideas and problems.
 - Graph: capability-driven controls, Single and Live modes, cursors, measurements, decode panel,
   search box, Image button. WebGL2 renderer by default, Plotly selectable.
-- Compact layout: no page scroll at 1280×720 on any tab. Light and dark theme.
+- Graph plot: wheel/pinch zoom, sideways swipe or Shift+wheel pan, drag, double-click fit; zoom and
+  pan stay within the data. Volt grid and V/div per analog lane, a trigger marker (time and level)
+  on triggered captures, labels that stay readable over traces, a hint on the empty plot. A new
+  Single capture is always fitted into view; Live zooming keeps the old traces until new data
+  arrives.
+- Measurements grouped per capture with time, rate and length; earlier captures marked; SI
+  prefixes and no more digits than the converter resolves.
+- A toolbar that keeps its shape across states and modes; sample rates in MS/s.
+- MCP log: *Follow* unticks when you scroll up to read and ticks again at the bottom.
+- Compact layout: no page scroll at any window size on any tab; narrow windows stack or fold the
+  side columns and compact the header. Light and dark theme.
 
 ## Security (M10)
 

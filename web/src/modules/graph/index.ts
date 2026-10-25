@@ -22,6 +22,7 @@ import {
   type RendererId,
   type WaveformRenderer,
 } from "../../render/index";
+import type { TriggerMarker } from "../../render/types";
 import { readThemeColors } from "../../render/plotly-theme";
 import { type ChannelControl, type DeviceControlSchema, buildControlSchema, controlsFingerprint, isAnalogControl, isDigitalControl } from "./capabilities";
 import { chooseSelection } from "./device-selection";
@@ -45,12 +46,17 @@ import { buildLayout, controlFromRecChannel, type AnalogChannelSettings } from "
 import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext } from "./traces";
 import { identityCalibration } from "./scale";
 import { cursorReadout } from "./cursors";
-import { formatSiDuration, formatSiFrequency } from "../../format";
+import { formatSampleRate, formatSiDuration, formatSiFrequency } from "../../format";
 import {
+  addMeasurementStatus,
+  captureHeader,
+  snapshotSampleCount,
   requestMeasurement,
+  measurementBlocks,
   measurementRows,
   ANALOG_MEASUREMENT_KINDS,
   DIGITAL_MEASUREMENT_KINDS,
+  type CaptureInfo,
   type MeasurementStatus,
 } from "./measurements";
 import { pickRecordingToAttach, startedItsOwnRecording } from "./live-attach";
@@ -98,6 +104,10 @@ const POPOVER_PANEL =
   "absolute left-0 top-full z-10 mt-1 flex min-w-[16rem] flex-col gap-2 rounded-lg border border-awic-border bg-awic-bg-raised p-3 shadow-lg";
 const POPOVER_ROW = "flex flex-wrap items-center gap-2 text-sm";
 const SIDE_SECTION_TITLE = "mb-1.5 text-sm font-semibold";
+/** Below this window width the side panel is a drawer over the plot; the `max-[900px]:` classes on it say the same. */
+const SIDE_PANEL_DRAWER_PX = 900;
+/** How long Live frames from the view just left are skipped before they are drawn again (see the view-frame handler). */
+const LIVE_VIEW_CHANGE_GRACE_MS = 2000;
 
 const ACQ_STATUS_CLASS: Record<string, string> = {
   running: "text-awic-ok",
@@ -145,6 +155,7 @@ class GraphModule extends AwicModule {
   private acqStatusEl!: HTMLElement;
   private recStatusEl!: HTMLElement;
   private gapBannerEl!: HTMLElement;
+  private plotHintEl!: HTMLElement;
 
   private channelsPopoverBtn!: HTMLButtonElement;
   private channelsPopoverPanel!: HTMLElement;
@@ -155,6 +166,7 @@ class GraphModule extends AwicModule {
   private displayPopoverBtn!: HTMLButtonElement;
   private displayPopoverPanel!: HTMLElement;
   private popovers: Popover[] = [];
+  private triggerPopover: Popover | null = null;
 
   private channelsEl!: HTMLElement;
   private rateSelectEl!: HTMLSelectElement;
@@ -196,6 +208,9 @@ class GraphModule extends AwicModule {
   private decodeFramesEl!: HTMLElement;
 
   private unsubscribers: Array<() => void> = [];
+  /** Whether the side panel is wanted on a wide window: the Panel button's last choice there. */
+  private sidePanelOpenWide = true;
+  private narrowLayout: MediaQueryList | null = null;
   private plotResizeObserver: ResizeObserver | null = null;
 
   private devices: readonly DeviceInfo[] = [];
@@ -237,12 +252,24 @@ class GraphModule extends AwicModule {
   private liveList: RecListResult | null = null;
   private liveListTimer: ReturnType<typeof setInterval> | null = null;
   private liveSnapshotCapture: string | null = null;
+  /**
+   * The newest time a drawn Live frame reached, seconds. `rec.list` reports
+   * the recording's head once a second while frames move the view on every
+   * tick, so the zoom/pan limit takes whichever is further along.
+   */
+  private liveFrameHeadSeconds = 0;
+  /** When Live last switched between following and a fixed range, `performance.now()` ms. */
+  private liveViewChangedAt = 0;
   private readonly viewportDebouncer: Debouncer<void> = debounce(300, () => this.flushViewUpdate());
 
   private rendererId: RendererId = DEFAULT_RENDERER_ID;
   private renderer: WaveformRenderer | null = null;
   private viewportUnsubscribe: (() => void) | null = null;
   private measurementStatuses: MeasurementStatus[] = [];
+  /** What each capture measured from was, for the header of its block of results. */
+  private captureInfos = new Map<string, CaptureInfo>();
+  /** The capture `renderMeasurements` last treated as current; a different one now means re-marking the blocks. */
+  private measurementsCurrentCapture: string | null = null;
 
   // --- Decode (SPEC §6, T21): capture.decode (Single) / rec.decode (Live) ---
   private decoders: readonly DecoderInfo[] = [];
@@ -271,6 +298,12 @@ class GraphModule extends AwicModule {
   private streamPlacer = new FrameSpanPlacer(0);
   /** Whether anything of the capture on screen has been handed to the renderer yet. */
   private streamDrawn = false;
+  /** Whether the plot has shown any data since the page loaded; until then it carries a hint instead of a blank area. */
+  private plotHasData = false;
+  /** Where the trigger of the Single capture on screen fired, if it was triggered. */
+  private captureTrigger: TriggerMarker | null = null;
+  /** The stream this tab started itself: only its configuration (`effective`) is known here. */
+  private ownStreamId: number | null = null;
   /** A redraw of `streamTraces` already scheduled; frames arriving meanwhile join it. */
   private streamDrawTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -299,8 +332,11 @@ class GraphModule extends AwicModule {
     this.className = "flex min-h-0 flex-1 flex-col overflow-hidden";
     this.innerHTML = `
       <div class="relative flex flex-none flex-wrap items-center gap-2 border-b border-awic-border bg-awic-bg-raised px-4 py-2">
-        <label class="${LABEL}">Device <select id="device" class="${SELECT}"></select></label>
-        <span id="device-note" class="${HINT}"></span>
+        <label class="${LABEL}">Device <select id="device" class="${SELECT} w-56 truncate"></select></label>
+        <!-- An icon with the note as its tooltip, never a line of text: the
+             note comes and goes with the device, and the toolbar must not
+             re-flow when it does. -->
+        <span id="device-note" class="invisible flex-none cursor-help text-sm text-awic-fg-muted" aria-hidden="true">ⓘ</span>
 
         <div class="flex gap-1" role="group" aria-label="Mode">
           <button id="mode-single" type="button" class="${BUTTON_BASE} ${BUTTON_ACTIVE}">Single</button>
@@ -309,8 +345,10 @@ class GraphModule extends AwicModule {
 
         <button id="start" type="button" class="${BUTTON_BASE} ${BUTTON_PRIMARY}">Start</button>
         <button id="stop" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Stop</button>
-        <button id="follow" type="button" hidden class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Follow</button>
-        <button id="snapshot" type="button" hidden class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Snapshot</button>
+        <!-- Always present, disabled when they do not apply: a button that
+             appears or disappears moves its neighbours under the pointer. -->
+        <button id="follow" type="button" disabled class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Follow</button>
+        <button id="snapshot" type="button" disabled class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Snapshot</button>
 
         <!-- SPEC 5.6: a server-drawn view of the current capture, to open,
              save or share. The same renderer an agent reaches through the
@@ -321,7 +359,7 @@ class GraphModule extends AwicModule {
           <option value="histogram">Histogram</option>
           <option value="anomalies">Anomalies</option>
         </select>
-        <select id="image-channel" hidden class="${SELECT}" title="Channel to fold"></select>
+        <select id="image-channel" disabled class="${SELECT}" title="Channel to fold"></select>
         <button id="image" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Image</button>
 
         <div class="relative">
@@ -382,20 +420,31 @@ class GraphModule extends AwicModule {
               <label class="${LABEL}">View start (s) <input id="view-start" type="number" step="any" class="${NUMBER_INPUT}" /></label>
               <label class="${LABEL}">View end (s) <input id="view-end" type="number" step="any" class="${NUMBER_INPUT}" /></label>
             </div>
-            <span class="${HINT}">Wheel-zoom / drag-pan / double-click-fit also work directly on the plot.</span>
+            <span class="${HINT}">On the plot: wheel or pinch to zoom, drag, Shift+wheel or a sideways swipe to pan, double-click to fit.</span>
           </div>
         </div>
 
-        <span id="acq-status" class="text-sm font-medium">idle</span>
-        <span id="rec-status" class="${HINT}"></span>
-        <div id="gap-banner" class="rounded-md bg-awic-danger-bg px-2 py-1 text-xs text-awic-danger empty:hidden"></div>
+        <!-- A slot of fixed height and basis for the status: its text changes
+             with every state, and wrapping it used to push the plot up and
+             down. Long text is cut and kept whole in the tooltip. -->
+        <div class="flex h-9 min-w-0 flex-1 basis-64 flex-col justify-center leading-tight">
+          <span id="acq-status" class="truncate text-sm font-medium">idle</span>
+          <span id="rec-status" class="${HINT} truncate"></span>
+        </div>
 
-        <button id="panel-toggle" type="button" class="ml-auto ${BUTTON_BASE} ${BUTTON_NEUTRAL}">Panel</button>
+        <button id="panel-toggle" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Panel</button>
       </div>
 
-      <div class="flex min-h-0 flex-1">
-        <div id="plot" class="plot min-h-0 flex-1 overflow-hidden bg-awic-bg [&>*]:h-full [&>*]:w-full"></div>
-        <aside id="side-panel" class="relative w-80 min-h-0 flex-none border-l border-awic-border bg-awic-bg-raised">
+      <div class="relative flex min-h-0 flex-1">
+        <div class="relative min-h-0 min-w-0 flex-1">
+          <div id="plot" class="plot absolute inset-0 overflow-hidden bg-awic-bg [&>*]:h-full [&>*]:w-full"></div>
+          <p id="plot-hint" class="pointer-events-none absolute inset-0 m-0 flex items-center justify-center p-6 text-center text-sm text-awic-fg-muted"></p>
+          <div id="gap-banner" class="pointer-events-none absolute left-1/2 top-2 -translate-x-1/2 rounded-md bg-awic-danger-bg px-2 py-1 text-xs text-awic-danger empty:hidden"></div>
+        </div>
+        <!-- Beside the plot on a wide window; below ${SIDE_PANEL_DRAWER_PX}px it
+             is a drawer over the plot's right edge, so it never squeezes the
+             plot to a sliver. -->
+        <aside id="side-panel" class="relative w-80 min-h-0 flex-none border-l border-awic-border bg-awic-bg-raised max-[900px]:absolute max-[900px]:inset-y-0 max-[900px]:right-0 max-[900px]:z-20 max-[900px]:max-w-[85%] max-[900px]:shadow-lg">
           <!--
             The side panel's content is absolutely positioned inside this
             "relative" host rather than laid out in normal flow (mirroring
@@ -415,9 +464,9 @@ class GraphModule extends AwicModule {
             <section class="mb-4">
               <h3 class="${SIDE_SECTION_TITLE}">Measurements</h3>
               <p class="${HINT} mb-2">
-                Computed server-side on full-resolution data (SPEC §5.4) — never in the browser on
-                decimated data. A kind that cannot be measured is shown as "unavailable" with the
-                server's reason, never as a blank or a guessed number.
+                Measured by the server on the full-resolution capture, not on what the plot shows.
+                A value that cannot be measured says why. Each capture gets its own block; results
+                from an earlier capture are marked as such.
               </p>
               <div id="measurements"></div>
             </section>
@@ -428,7 +477,7 @@ class GraphModule extends AwicModule {
             </section>
             <section id="search-section" hidden>
               <h3 class="${SIDE_SECTION_TITLE}">Pattern search</h3>
-              <p class="${HINT} mb-2">SPEC §2.9 syntax, e.g. <code>D0 rising</code> or <code>D0 f=1k 100010x101</code>.</p>
+              <p class="${HINT} mb-2">For example <code>D0 rising</code> or <code>D0 f=1k 100010x101</code>.</p>
               <div class="mb-2 flex flex-wrap items-center gap-2">
                 <input id="search-pattern" type="text" placeholder="pattern" class="min-w-0 flex-1 ${SELECT}" />
                 <button id="search-btn" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Search</button>
@@ -444,7 +493,7 @@ class GraphModule extends AwicModule {
             <section id="decode-section" class="mt-4">
               <h3 class="${SIDE_SECTION_TITLE}">Decode</h3>
               <p class="${HINT} mb-2">
-                SPEC §6: UART, I&sup2;C, SPI, CAN or 1-Wire over the current capture (Single) or the visible
+                UART, I&sup2;C, SPI, CAN or 1-Wire over the current capture (Single) or the visible
                 recording range (Live). On an analog capture a role can take a second channel to
                 subtract (CANH − CANL), and the threshold is found for you unless you set it.
               </p>
@@ -479,6 +528,7 @@ class GraphModule extends AwicModule {
     this.acqStatusEl = this.requireEl("#acq-status");
     this.recStatusEl = this.requireEl("#rec-status");
     this.gapBannerEl = this.requireEl("#gap-banner");
+    this.plotHintEl = this.requireEl("#plot-hint");
 
     this.channelsPopoverBtn = this.requireEl("#popover-channels-btn");
     this.channelsPopoverPanel = this.requireEl("#popover-channels-panel");
@@ -533,8 +583,19 @@ class GraphModule extends AwicModule {
     this.wirePopovers();
     // Closed by default on a narrow screen (SPEC §11.3); a normal desktop
     // width starts with it open, matching the module's pre-M15 behaviour of
-    // always showing measurements.
-    this.sidePanelEl.hidden = window.matchMedia("(max-width: 900px)").matches;
+    // always showing measurements. Crossing the width later does the same,
+    // so a window narrowed with the panel open does not leave the plot a
+    // sliver beside it.
+    // `max-width: 899.98px`, not `900px`: Tailwind's `max-[900px]:` is
+    // `width < 900px`, and the two must agree at exactly 900 px. Going wide
+    // restores whatever the Panel button last chose on a wide window.
+    const narrow = window.matchMedia(`(max-width: ${SIDE_PANEL_DRAWER_PX - 0.02}px)`);
+    this.sidePanelEl.hidden = narrow.matches;
+    narrow.addEventListener("change", (e) => {
+      this.sidePanelEl.hidden = e.matches || !this.sidePanelOpenWide;
+    });
+    this.narrowLayout = narrow;
+    this.renderPlotHint();
     // Subscriptions/timers start in activate() so an inactive-but-mounted module does no background work.
   }
 
@@ -576,6 +637,7 @@ class GraphModule extends AwicModule {
           this.streamTracesFor = frame.header.streamId;
           this.streamViewFollows = true;
           this.streamDrawn = false;
+          this.captureTrigger = null;
         }
         this.addStreamFrames(this.streamPlacer.push(frame));
       }),
@@ -584,10 +646,27 @@ class GraphModule extends AwicModule {
       this.ctx.ws.viewFrames.on((frame) => {
         const renderer = this.renderer;
         if (this.mode !== "live" || frame.header.viewId !== this.liveViewId || !renderer) return;
+        // Frames still in flight for the view the user just left: a follow
+        // frame after a zoom or pan, or a fixed-range one after Follow. Drawn,
+        // they replaced the traces with data outside the new view and the
+        // plot went blank until the server caught up; skipped, the old traces
+        // stay on screen, scaled, until the right data arrives. Only for a
+        // while, though: if the view change never reached the server, its
+        // frames keep the old flag, and skipping them for good would freeze
+        // the plot. Past the grace period they are drawn and the change is
+        // sent again.
+        if (frame.header.flags.follow !== this.liveViewState.following) {
+          if (performance.now() - this.liveViewChangedAt < LIVE_VIEW_CHANGE_GRACE_MS) return;
+          this.liveViewChangedAt = performance.now();
+          this.recStatusEl.textContent = "view change not applied yet — sending it again";
+          this.recStatusEl.title = this.recStatusEl.textContent;
+          this.flushViewUpdate();
+        }
         const traces = viewFrameToTraces(frame, { rateHz: this.liveRateHz, channels: this.liveChannels });
         renderer.setTraces({ traces });
         this.liveFrameCount += 1;
         this.dataset.liveFrames = String(this.liveFrameCount);
+        this.markPlotHasData();
         // A follow view's frames slide forward as the recording grows; a
         // renderer only auto-fits its viewport once (its own contract, SPEC
         // §5.3), so Live mode must drive it explicitly on every frame while
@@ -599,7 +678,13 @@ class GraphModule extends AwicModule {
         // a digital-runs frame's `item_count` counts runs, not samples.
         if (this.liveViewState.following) {
           const bounds = tracesTimeBounds(traces);
-          if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
+          if (bounds) {
+            renderer.setViewport(bounds.t0, bounds.t1);
+            if (bounds.t1 > this.liveFrameHeadSeconds) {
+              this.liveFrameHeadSeconds = bounds.t1;
+              this.renderTimeLimits();
+            }
+          }
         }
       }),
     );
@@ -711,6 +796,7 @@ class GraphModule extends AwicModule {
       this.onDeviceChanged();
     }
     this.renderRunStopButtons();
+    this.renderPlotHint();
   }
 
   /** The selected device is known but not on the bus right now. */
@@ -720,7 +806,11 @@ class GraphModule extends AwicModule {
 
   private onDeviceChanged(): void {
     const device = this.selectedDeviceInfo;
-    this.deviceNoteEl.textContent = device ? (collisionNote(device.vid, device.pid) ?? "") : "";
+    const note = device ? collisionNote(device.vid, device.pid) : null;
+    this.deviceNoteEl.title = note ?? "";
+    this.deviceNoteEl.classList.toggle("invisible", note === null);
+    this.deviceNoteEl.setAttribute("aria-hidden", String(note === null));
+    if (note !== null) this.deviceNoteEl.setAttribute("aria-label", note);
     this.schema = buildControlSchema(device?.capabilities ?? []);
     this.channelState = this.schema.channels.map(
       (control): ChannelUiState => ({
@@ -807,7 +897,13 @@ class GraphModule extends AwicModule {
         // no one finite capture handle for a still-growing recording.
         if (this.mode === "single")
           row.append(
-            this.buildMeasureControl(state.control.channel, state.control.label, "analog", () => this.acqState.captureHandle),
+            this.buildMeasureControl(
+              state.control.channel,
+              state.control.label,
+              "analog",
+              () => this.acqState.captureHandle,
+              () => this.effective?.calibration.find((c) => c.channel === state.control.channel)?.scale,
+            ),
           );
       } else if (this.mode === "single") {
         row.append(
@@ -824,9 +920,9 @@ class GraphModule extends AwicModule {
     for (const rateHz of this.schema.sampleRatesHz) {
       const option = document.createElement("option");
       option.value = String(rateHz);
-      // The digital rate ladder spans 20 kHz..24 MHz; always
-      // labelling in MHz would show "0.02 MHz" for the low end.
-      option.textContent = formatSiFrequency(rateHz);
+      // The digital rate ladder spans 20 kS/s..24 MS/s; always
+      // labelling in MS/s would show "0.02 MS/s" for the low end.
+      option.textContent = formatSampleRate(rateHz);
       this.rateSelectEl.appendChild(option);
     }
     // Default to the fastest available rate, not whichever the ladder
@@ -871,17 +967,24 @@ class GraphModule extends AwicModule {
     this.mode = mode;
     this.modeSingleEl.className = `${BUTTON_BASE} ${mode === "single" ? BUTTON_ACTIVE : BUTTON_NEUTRAL}`;
     this.modeLiveEl.className = `${BUTTON_BASE} ${mode === "live" ? BUTTON_ACTIVE : BUTTON_NEUTRAL}`;
-    // Trigger only applies to a finite, triggered Single capture (SPEC §5.5's table).
-    document.getElementById("popover-trigger-wrap")!.hidden = mode === "live";
+    // Trigger only applies to a finite, triggered Single capture (SPEC §5.5's
+    // table). Disabled rather than hidden, like Follow and Snapshot, so the
+    // toolbar keeps its shape across modes.
+    this.triggerPopoverBtn.disabled = mode === "live";
+    this.triggerPopoverBtn.title = mode === "live" ? "Trigger applies to Single captures" : "";
+    if (mode === "live") this.triggerPopover?.close();
     this.samplesRowEl.hidden = mode === "live";
     this.liveWindowRowEl.hidden = mode !== "live";
-    this.snapshotButtonEl.hidden = mode !== "live";
     this.snapshotSectionEl.hidden = mode !== "live";
+    // "not recording" means nothing in Single mode.
+    if (mode === "single") this.recStatusEl.textContent = "";
     this.searchSectionEl.hidden = mode !== "live";
     this.renderChannelControls(); // Measure buttons only show in Single mode
     this.refreshImageControls();
     this.renderRunStopButtons();
     this.renderLiveStatus();
+    this.renderLiveButtons();
+    this.renderMeasurements(); // which capture is the current one changed
     this.mountRenderer();
     this.resetDecodeResults();
     this.renderDecodeRoles();
@@ -894,9 +997,10 @@ class GraphModule extends AwicModule {
       anchor.addEventListener("click", () => popover.toggle());
       return popover;
     };
+    this.triggerPopover = wire(this.triggerPopoverBtn, this.triggerPopoverPanel);
     this.popovers = [
       wire(this.channelsPopoverBtn, this.channelsPopoverPanel),
-      wire(this.triggerPopoverBtn, this.triggerPopoverPanel),
+      this.triggerPopover,
       wire(this.acqPopoverBtn, this.acqPopoverPanel),
       wire(this.displayPopoverBtn, this.displayPopoverPanel),
     ];
@@ -971,6 +1075,8 @@ class GraphModule extends AwicModule {
       renderer.mount(this.plotEl, layout);
       this.rendererNoticeEl.textContent = "";
       this.applyPlotTheme();
+      this.renderTriggerMarker();
+      this.renderTimeLimits();
       if (this.mode === "live") this.primeLiveViewport(renderer);
     } catch (err) {
       if (err instanceof RendererNotImplementedError) {
@@ -1031,7 +1137,7 @@ class GraphModule extends AwicModule {
     this.viewEndEl.value = String(t1);
     if (this.mode === "single") this.streamViewFollows = false;
     if (this.mode === "live" && this.liveViewId !== null) {
-      this.liveViewState = pauseAtViewport(t0, t1);
+      this.setLiveViewState(pauseAtViewport(t0, t1));
       this.renderLiveStatus();
       this.viewportDebouncer.call(undefined);
       // SPEC T21: "Live mode re-decodes the visible range when the view
@@ -1075,7 +1181,15 @@ class GraphModule extends AwicModule {
       this.cancelStreamDraw();
       this.streamTracesFor = null;
       const started = await this.ctx.ws.send("acq.start", { device });
+      this.captureInfos.set(started.capture, {
+        capture: started.capture,
+        takenAtMs: Date.now(),
+        rateHz: configured.cfg.rate_hz,
+        samples: configured.cfg.samples,
+        source: "single",
+      });
       this.acqState = applyStreamStarted(this.acqState, started);
+      this.ownStreamId = started.stream;
       this.renderAcqStatus();
       this.resetDecodeResults(); // a fresh capture invalidates any previously decoded annotations
       this.refreshImageControls();
@@ -1131,12 +1245,21 @@ class GraphModule extends AwicModule {
     for (const { frame, spanSeconds } of placed) this.streamTraces.add(frameToTraces(frame, this.streamTraceContext(spanSeconds)));
     if (!this.streamDrawn) {
       this.streamDrawn = true;
-      renderer.setTraces({ traces: this.streamTraces.snapshot() });
+      const traces = this.streamTraces.snapshot();
+      renderer.setTraces({ traces });
       // A renderer's first-ever `setTraces` fits itself and reports that as a
       // viewport change, read as the user zooming - on a fresh page the view
       // then stayed on the first 8 ms frame of a 1.28 s capture. Nothing the
       // user did yet: keep widening (`primeLiveViewport` is Live's answer).
       this.streamViewFollows = true;
+      // And it fits only that once: after Live, or any earlier capture, the
+      // view stayed where it was and a capture that arrived in one frame was
+      // drawn off screen until a double-click. Fit the new capture here.
+      const bounds = tracesTimeBounds(traces);
+      if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
+      this.captureTrigger = this.triggerMarkerForCapture();
+      this.renderTriggerMarker();
+      this.markPlotHasData();
       return;
     }
     // Redrawing everything received so far on every frame is quadratic in
@@ -1148,6 +1271,71 @@ class GraphModule extends AwicModule {
   private cancelStreamDraw(): void {
     if (this.streamDrawTimer !== null) clearTimeout(this.streamDrawTimer);
     this.streamDrawTimer = null;
+  }
+
+  /**
+   * Where the capture now arriving was triggered: the effective trigger,
+   * placed at the capture's midpoint sample (`triggerSampleIndex`), on the
+   * plot's time axis. An analog channel also gets its level; a digital one
+   * has none to draw.
+   */
+  private triggerMarkerForCapture(): TriggerMarker | null {
+    // A capture an agent or another tab started on this device carries its
+    // own trigger, which this tab does not know: no marker rather than one
+    // for a trigger that was not used.
+    if (this.streamTracesFor === null || this.streamTracesFor !== this.ownStreamId) return null;
+    const cfg = this.effective?.cfg;
+    const trigger = cfg?.trigger;
+    const rateHz = this.streamRateHz();
+    if (!cfg || !trigger || !(rateHz > 0)) return null;
+    const control = this.channelState.find((c) => c.control.channel === trigger.channel)?.control;
+    return {
+      t: this.captureT0Seconds + triggerSampleIndex(cfg.samples) / rateHz,
+      channel: trigger.channel,
+      levelV: control && isAnalogControl(control) ? (trigger.level ?? null) : null,
+    };
+  }
+
+  /** The trigger marker belongs to a Single capture; Live has none. */
+  private renderTriggerMarker(): void {
+    this.renderer?.setTrigger(this.mode === "single" ? this.captureTrigger : null);
+  }
+
+  /**
+   * How far the user may zoom out and pan. Single: the capture itself (the
+   * renderer's default). Live: the recording's retained span, so panning
+   * into history beyond the loaded window still works.
+   */
+  private renderTimeLimits(): void {
+    const renderer = this.renderer;
+    if (!renderer) return;
+    const summary =
+      this.mode === "live" && this.liveRecId !== null
+        ? this.liveRecordings.find((r) => r.rec === this.liveRecId)
+        : undefined;
+    if (!summary || !(summary.rate_hz > 0)) {
+      renderer.setTimeLimits(null);
+      return;
+    }
+    renderer.setTimeLimits({
+      t0: summary.first_sample / summary.rate_hz,
+      t1: Math.max(headSeconds(summary), this.liveFrameHeadSeconds),
+    });
+  }
+
+  private markPlotHasData(): void {
+    if (this.plotHasData) return;
+    this.plotHasData = true;
+    this.renderPlotHint();
+  }
+
+  /** A line in the empty plot saying what to do, until the first data arrives. */
+  private renderPlotHint(): void {
+    this.plotHintEl.hidden = this.plotHasData;
+    this.plotHintEl.textContent =
+      this.devices.length === 0 && this.selectedDeviceId === null
+        ? "No instrument found yet. Connect one; it appears under Device as soon as it is on the bus."
+        : "Pick a device and press Start. In Single mode one capture is taken; Live records continuously.";
   }
 
   /** Draws the capture received so far for `streamId`, if it is still the one on screen. */
@@ -1198,10 +1386,14 @@ class GraphModule extends AwicModule {
 
   private renderAcqStatus(): void {
     const activity = this.currentActivity();
-    this.acqStatusEl.textContent = activityLine(activity);
+    const line = activityLine(activity);
+    this.acqStatusEl.textContent = line;
+    this.acqStatusEl.title = line;
     this.acqStatusEl.dataset.state = activity.kind;
-    this.acqStatusEl.className = `text-sm font-medium ${ACQ_STATUS_CLASS[activity.kind] ?? "text-awic-fg-muted"}`;
+    this.acqStatusEl.className = `truncate text-sm font-medium ${ACQ_STATUS_CLASS[activity.kind] ?? "text-awic-fg-muted"}`;
     this.renderRunStopButtons();
+    // A new capture makes the results on screen history: re-mark them.
+    if (this.currentImageCapture() !== this.measurementsCurrentCapture) this.renderMeasurements();
   }
 
   private renderGapBanner(streams: Readonly<Record<number, { readonly droppedTotal: number }>>): void {
@@ -1323,6 +1515,7 @@ class GraphModule extends AwicModule {
       }
 
       this.liveRecId = recId;
+      this.liveFrameHeadSeconds = 0;
       // `pickRecordingToAttach` is an `Array.find`, so "nothing to attach to" is
       // `undefined`, not `null`: `existing === null` was false either way and
       // the tab never treated a recording as its own, so B-68's cleanup never
@@ -1442,6 +1635,7 @@ class GraphModule extends AwicModule {
       // device's activity line and Stop button read the same list (B-66).
       this.renderAcqStatus();
       this.renderLiveStatus();
+      this.renderTimeLimits();
     } catch {
       // A transient failure just skips this refresh tick; the next one retries.
     }
@@ -1458,16 +1652,53 @@ class GraphModule extends AwicModule {
     const summary = this.liveRecId !== null ? this.liveRecordings.find((r) => r.rec === this.liveRecId) : undefined;
     this.recStatusEl.textContent =
       summary && this.liveList ? formatRecordingStatus(summary, this.liveList) : NO_RECORDING_STATUS;
+    this.recStatusEl.title = this.recStatusEl.textContent;
     this.renderAcqStatus();
-    this.followButtonEl.hidden = this.liveViewId === null || this.liveViewState.following;
+    this.renderLiveButtons();
+  }
+
+  /** Follow and Snapshot are always on the toolbar; whether they can be used is their disabled state, and why not is their tooltip. */
+  private renderLiveButtons(): void {
+    const live = this.mode === "live";
+    const watching = live && this.liveViewId !== null;
+    this.followButtonEl.disabled = !watching || this.liveViewState.following;
+    this.followButtonEl.title = !live
+      ? "Live mode only"
+      : !watching
+        ? "Start a Live recording first"
+        : this.liveViewState.following
+          ? "Already following the newest data"
+          : "Go back to following the newest data";
+    this.snapshotButtonEl.disabled = !watching;
+    this.snapshotButtonEl.title = !live
+      ? "Live mode only"
+      : !watching
+        ? "Start a Live recording first"
+        : "Keep the visible range as a capture to measure or export";
   }
 
   private onFollowClick(): void {
     if (this.liveViewId === null) return;
     this.viewportDebouncer.cancel();
-    this.liveViewState = resumeFollowing();
+    this.setLiveViewState(resumeFollowing());
     this.renderLiveStatus();
     this.flushViewUpdate();
+  }
+
+  /** Every user-driven change of the Live view goes through here, so the frame filter knows when it changed. */
+  private setLiveViewState(next: LiveViewState): void {
+    if (next.following !== this.liveViewState.following) this.liveViewChangedAt = performance.now();
+    this.liveViewState = next;
+  }
+
+  /**
+   * A `rec.view.update` that failed: a refusal from the server is already on
+   * the error banner, but a dropped connection or a timeout is not, so say
+   * it on the status line. The frame filter sends it again.
+   */
+  private onViewUpdateFailed(): void {
+    this.recStatusEl.textContent = "could not change the view — retrying";
+    this.recStatusEl.title = this.recStatusEl.textContent;
   }
 
   /** Sends `rec.view.update` for the current (following or fixed) state — the debounced target for pan/zoom/resize, and also called immediately for a deliberate action (Follow, a search-result click). */
@@ -1478,11 +1709,11 @@ class GraphModule extends AwicModule {
     if (this.liveViewState.following) {
       this.ctx.ws
         .send("rec.view.update", { view, follow_s: followWindowSeconds(this.currentFollowWindowSeconds()), columns })
-        .catch(() => {});
+        .catch(() => this.onViewUpdateFailed());
     } else if (this.liveViewState.t0 !== null && this.liveViewState.t1 !== null) {
       this.ctx.ws
         .send("rec.view.update", { view, t0_s: this.liveViewState.t0, t1_s: this.liveViewState.t1, columns })
-        .catch(() => {});
+        .catch(() => this.onViewUpdateFailed());
     }
   }
 
@@ -1544,7 +1775,7 @@ class GraphModule extends AwicModule {
    */
   private refreshImageControls(): void {
     const kind = this.imageKind();
-    this.imageChannelEl.hidden = !isSingleChannel(kind);
+    this.imageChannelEl.disabled = !isSingleChannel(kind);
     const enabled = this.channelState.filter((c) => c.enabled);
     const wanted = enabled.map((c) => ({ channel: c.control.channel, label: c.control.label }));
     const current = this.imageChannelEl.value;
@@ -1576,7 +1807,15 @@ class GraphModule extends AwicModule {
     try {
       const result = await this.ctx.ws.send("rec.snapshot", { rec, t0_s: range.t0, t1_s: range.t1 });
       this.liveSnapshotCapture = result.capture;
+      this.captureInfos.set(result.capture, {
+        capture: result.capture,
+        takenAtMs: Date.now(),
+        rateHz: this.liveRateHz,
+        samples: snapshotSampleCount(range, this.liveRateHz, this.liveRecordings.find((r) => r.rec === rec)),
+        source: "snapshot",
+      });
       this.refreshImageControls();
+      this.renderMeasurements();
       this.snapshotStatusEl.textContent = `Captured ${formatSiDuration(range.t0)} – ${formatSiDuration(range.t1)}.`;
       this.renderSnapshotSection();
     } catch {
@@ -1598,7 +1837,13 @@ class GraphModule extends AwicModule {
       label.textContent = channel.name;
       row.appendChild(label);
       const kind = channel.name.startsWith("D") ? "digital" : "analog";
-      const measure = this.buildMeasureControl(channel.channel, channel.name, kind, () => this.liveSnapshotCapture);
+      const measure = this.buildMeasureControl(
+        channel.channel,
+        channel.name,
+        kind,
+        () => this.liveSnapshotCapture,
+        () => channel.calibration.scale,
+      );
       row.appendChild(measure);
       this.snapshotChannelsEl.appendChild(row);
     }
@@ -1659,7 +1904,7 @@ class GraphModule extends AwicModule {
     const window = followWindowSeconds(this.currentFollowWindowSeconds());
     const t0 = tSeconds - window / 2;
     const t1 = tSeconds + window / 2;
-    this.liveViewState = pauseAtViewport(t0, t1);
+    this.setLiveViewState(pauseAtViewport(t0, t1));
     this.renderer?.setViewport(t0, t1);
     this.renderLiveStatus();
     this.flushViewUpdate();
@@ -1706,6 +1951,7 @@ class GraphModule extends AwicModule {
     label: string,
     kind: "analog" | "digital",
     getCapture: () => string | null,
+    getResolutionV: () => number | undefined = () => undefined,
   ): HTMLElement {
     const wrapper = document.createElement("span");
     const button = document.createElement("button");
@@ -1716,14 +1962,22 @@ class GraphModule extends AwicModule {
       const capture = getCapture();
       if (!capture) return;
       const kinds = kind === "analog" ? ANALOG_MEASUREMENT_KINDS : DIGITAL_MEASUREMENT_KINDS;
-      const request = { capture, channel, label, kinds };
+      const resolution = kind === "analog" ? getResolutionV() : undefined;
+      const request = {
+        capture,
+        channel,
+        label,
+        kinds,
+        ...(resolution !== undefined ? { resolutionV: Math.abs(resolution) } : {}),
+      };
 
       // Show a pending row immediately, then replace it once the server
       // responds — the request is genuinely asynchronous, and a stale
       // "measuring…" row must never be mistaken for a real answer.
       const pending: MeasurementStatus = { status: "pending", request };
-      this.measurementStatuses = [pending, ...this.measurementStatuses].slice(0, 20);
+      this.measurementStatuses = addMeasurementStatus(this.measurementStatuses, pending);
       this.renderMeasurements();
+      if (this.sidePanelEl.hidden) this.sidePanelEl.hidden = false;
 
       void requestMeasurement((params) => this.ctx.ws.send("capture.measure", params), request).then(
         (resolved) => {
@@ -1736,37 +1990,85 @@ class GraphModule extends AwicModule {
     return wrapper;
   }
 
+  /** Keeps capture details only for captures that still have results, or may get some (the ones on screen). */
+  private pruneCaptureInfos(): void {
+    const keep = new Set(this.measurementStatuses.map((s) => s.request.capture));
+    for (const capture of [this.acqState.captureHandle, this.liveSnapshotCapture]) if (capture) keep.add(capture);
+    for (const capture of [...this.captureInfos.keys()]) if (!keep.has(capture)) this.captureInfos.delete(capture);
+  }
+
+  /**
+   * One block per capture, newest first, each headed with when it was taken,
+   * its rate and its length. Results from a capture that is no longer the one
+   * on screen stay readable but are dimmed and marked, so an old value is
+   * never taken for a current one.
+   */
   private renderMeasurements(): void {
+    const current = this.currentImageCapture();
+    this.measurementsCurrentCapture = current;
     this.measurementsEl.replaceChildren();
     if (this.measurementStatuses.length === 0) {
       const hint = document.createElement("p");
       hint.className = HINT;
-      hint.textContent = "No measurement requested yet.";
+      hint.textContent = "No measurement yet. Use Measure next to a channel under Channels & ranges (or under Snapshot in Live mode).";
       this.measurementsEl.appendChild(hint);
       return;
     }
-    const table = document.createElement("table");
-    table.className = "w-full border-collapse text-sm";
-    const header = document.createElement("tr");
-    header.innerHTML = '<th class="p-1 text-left">Channel</th><th class="p-1 text-left">Kind</th><th class="p-1 text-left">Value</th>';
-    table.appendChild(header);
-    for (const status of this.measurementStatuses) {
-      for (const measurementRow of measurementRows(status)) {
-        const row = document.createElement("tr");
-        const channelCell = document.createElement("td");
-        channelCell.className = "p-1";
-        channelCell.textContent = measurementRow.label;
-        const kindCell = document.createElement("td");
-        kindCell.className = "p-1";
-        kindCell.textContent = measurementRow.kind;
-        const valueCell = document.createElement("td");
-        valueCell.className = "p-1";
-        valueCell.textContent = measurementRow.text;
-        row.append(channelCell, kindCell, valueCell);
-        table.appendChild(row);
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "mb-2 rounded border border-awic-border bg-awic-bg-raised px-2 py-0.5 text-xs hover:bg-awic-bg";
+    clear.textContent = "Clear";
+    clear.addEventListener("click", () => {
+      this.measurementStatuses = [];
+      this.renderMeasurements();
+    });
+    this.measurementsEl.appendChild(clear);
+
+    this.pruneCaptureInfos();
+    for (const block of measurementBlocks(this.measurementStatuses, (c) => this.captureInfos.get(c)?.takenAtMs)) {
+      const stale = block.capture !== current;
+      const section = document.createElement("div");
+      section.className = `mb-3 ${stale ? "opacity-60" : ""}`;
+      section.dataset.capture = block.capture;
+      const heading = document.createElement("div");
+      heading.className = "flex items-baseline justify-between gap-2 border-b border-awic-border pb-0.5 text-xs font-semibold";
+      const title = document.createElement("span");
+      title.className = "truncate";
+      title.textContent = captureHeader(this.captureInfos.get(block.capture));
+      title.title = title.textContent;
+      heading.appendChild(title);
+      if (stale) {
+        const badge = document.createElement("span");
+        badge.className = "flex-none font-normal text-awic-fg-muted";
+        badge.textContent = "previous capture";
+        heading.appendChild(badge);
       }
+      section.appendChild(heading);
+
+      const table = document.createElement("table");
+      table.className = "w-full border-collapse text-sm";
+      const header = document.createElement("tr");
+      header.innerHTML = '<th class="p-1 text-left">Channel</th><th class="p-1 text-left">Kind</th><th class="p-1 text-left">Value</th>';
+      table.appendChild(header);
+      for (const status of block.statuses) {
+        for (const measurementRow of measurementRows(status)) {
+          const row = document.createElement("tr");
+          const channelCell = document.createElement("td");
+          channelCell.className = "p-1";
+          channelCell.textContent = measurementRow.label;
+          const kindCell = document.createElement("td");
+          kindCell.className = "p-1";
+          kindCell.textContent = measurementRow.kind;
+          const valueCell = document.createElement("td");
+          valueCell.className = "p-1 tabular-nums";
+          valueCell.textContent = measurementRow.text;
+          row.append(channelCell, kindCell, valueCell);
+          table.appendChild(row);
+        }
+      }
+      section.appendChild(table);
+      this.measurementsEl.appendChild(section);
     }
-    this.measurementsEl.appendChild(table);
   }
 
   // ---------------------------------------------------------------------
@@ -2148,6 +2450,7 @@ class GraphModule extends AwicModule {
     this.modeLiveEl.addEventListener("click", () => this.setMode("live"));
     this.panelToggleEl.addEventListener("click", () => {
       this.sidePanelEl.hidden = !this.sidePanelEl.hidden;
+      if (!this.narrowLayout?.matches) this.sidePanelOpenWide = !this.sidePanelEl.hidden;
     });
     this.rendererSelectEl.addEventListener("change", () => {
       this.rendererId = this.rendererSelectEl.value as RendererId;
@@ -2185,6 +2488,7 @@ class GraphModule extends AwicModule {
 
     this.renderAcqStatus();
     this.renderRunStopButtons();
+    this.renderLiveButtons();
     this.renderCursorReadout();
     this.renderMeasurements();
     this.renderSnapshotSection();
@@ -2196,7 +2500,7 @@ class GraphModule extends AwicModule {
     if (!Number.isFinite(t0) || !Number.isFinite(t1) || !this.renderer) return;
     this.renderer.setViewport(t0, t1);
     if (this.mode === "live" && this.liveViewId !== null) {
-      this.liveViewState = pauseAtViewport(t0, t1);
+      this.setLiveViewState(pauseAtViewport(t0, t1));
       this.renderLiveStatus();
       this.flushViewUpdate();
       if (this.decodeActive) this.decodeDebouncer.call(undefined);
