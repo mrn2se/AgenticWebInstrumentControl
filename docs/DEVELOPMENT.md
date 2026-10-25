@@ -117,13 +117,15 @@ the dependency audit is clean: no known advisory against any Rust crate (`cargo 
 failing on unmaintained or yanked crates) or npm package (`npm audit`, build tools included),
 and every npm package's registry signature verified.
 
-- `awic-linux-x86_64`: a statically linked (musl) executable with the web UI compiled in
-  (`--features embed-web`).
-- `awic-linux-x86_64.cdx.json`, `awic-web.cdx.json`: CycloneDX SBOMs of the executable's Rust
+- `awic-linux-x86_64`, `awic-linux-aarch64`, `awic-linux-armv7`: statically linked (musl)
+  executables with the web UI compiled in (`--features embed-web`). aarch64 is built natively on
+  an ARM runner; armv7 is cross-built with the toolchain's `rust-lld` (`.cargo/config.toml`) and
+  its tests run under qemu.
+- `awic-linux-<arch>.cdx.json`, `awic-web.cdx.json`: CycloneDX SBOMs of each executable's Rust
   crates and of the web UI's runtime npm packages.
 - `THIRD-PARTY-LICENSES.txt`: the license notices of the third-party code compiled into the
-  executable (Rust crates, the Rust standard library and musl, the web UI's npm packages), which
-  their licenses require to go with it. [`tools/licenses/generate.sh`](../tools/licenses/generate.sh)
+  executables, one file for every target (Rust crates, the Rust standard library and musl, the
+  web UI's npm packages), which their licenses require to go with them. [`tools/licenses/generate.sh`](../tools/licenses/generate.sh)
   writes it; `make licenses` builds it locally (needs `cargo install --locked cargo-about --features cli`).
 
 The tag is the version: the workflow writes it into `crates/awic-server/Cargo.toml` and
@@ -166,3 +168,14 @@ Run the binary directly:
 ```
 
 A binary built with `make native` needs no `static_dir`.
+
+**For a Raspberry Pi or another ARM board,** build on any Linux x86_64 host; no cross compiler is
+needed, since `.cargo/config.toml` links the ARM targets with the toolchain's own `rust-lld`.
+Build the web UI first (`make frontend`), then:
+
+```sh
+rustup target add aarch64-unknown-linux-musl          # or armv7-unknown-linux-musleabihf
+cargo build --release --locked --target aarch64-unknown-linux-musl \
+  -p awic-server --bin awic --features embed-web
+scp target/aarch64-unknown-linux-musl/release/awic pi@raspberrypi:
+```

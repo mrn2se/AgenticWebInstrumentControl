@@ -1,18 +1,20 @@
 # CI on every push and pull request. Publishing a GitHub release (tag
 # `v<version>`) builds with that version and attaches to the release:
-#   - awic-linux-x86_64: a statically linked (musl) Linux x86_64 `awic`
-#     executable with the web frontend compiled in (`embed-web` feature), so
-#     it runs on any Linux host without a container, a libc match, or a
-#     `static_dir`.
-#   - awic-linux-x86_64.cdx.json, awic-web.cdx.json: CycloneDX SBOMs of the
+#   - awic-linux-x86_64, awic-linux-aarch64, awic-linux-armv7: statically
+#     linked (musl) Linux `awic` executables with the web frontend compiled
+#     in (`embed-web` feature), so they run on any Linux host without a
+#     container, a libc match, or a `static_dir`. aarch64 is for 64-bit ARM
+#     (Raspberry Pi 3/4/5 on a 64-bit OS, other ARM64 boards and servers),
+#     armv7 for 32-bit ARM (Raspberry Pi 2/3/4 on a 32-bit OS).
+#   - awic-linux-<arch>.cdx.json, awic-web.cdx.json: CycloneDX SBOMs of each
 #     executable's Rust crates and of the web frontend's runtime packages.
 #   - THIRD-PARTY-LICENSES.txt: the license notices of everything compiled
-#     into the executable, which MIT/BSD/Apache-2.0 require to go with it
-#     (tools/licenses/generate.sh).
+#     into the executables, which MIT/BSD/Apache-2.0 require to go with them
+#     (tools/licenses/generate.sh; one file covers every target).
 #
 # The audit job checks every Rust crate and npm package against the known
-# advisories (and npm's registry signatures); the executable is only built,
-# and a release only gets its files, when it passes.
+# advisories (and npm's registry signatures); the executables are only
+# built, and a release only gets its files, when it passes.
 #
 # Order matters as in the Containerfile: web/src/proto/types.ts is generated
 # from the Rust wire types by ts-rs, so every web step first runs the
@@ -38,8 +40,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   NODE_VERSION: "22"
-  TARGET: x86_64-unknown-linux-musl
-  ASSET: awic-linux-x86_64
+  # Every release target. The build job's matrix must list the same ones.
+  TARGETS: >-
+    x86_64-unknown-linux-musl:awic-linux-x86_64
+    aarch64-unknown-linux-musl:awic-linux-aarch64
+    armv7-unknown-linux-musleabihf:awic-linux-armv7
 
 jobs:
   rust:
@@ -53,6 +58,39 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+
+  # The tests again on the ARM targets: aarch64 natively, armv7 (32-bit:
+  # usize is 32 bits) under qemu user-mode emulation.
+  test-arm:
+    name: Rust test (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: armv7-unknown-linux-musleabihf
+            runner: ubuntu-latest
+            qemu: qemu-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install rustup if missing
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - run: rustup target add ${{ matrix.target }}
+      - if: matrix.qemu
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Test
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: ${{ matrix.qemu }}
 
   audit:
     name: Audit dependencies
@@ -110,15 +148,39 @@ jobs:
           retention-days: 7
 
   build:
-    name: Build single executable
-    needs: [rust, web, audit]
-    runs-on: ubuntu-latest
+    name: Build single executable (${{ matrix.asset }})
+    needs: [rust, test-arm, web, audit]
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            asset: awic-linux-x86_64
+            runner: ubuntu-latest
+          # Native on an ARM runner, so the smoke test runs it directly.
+          - target: aarch64-unknown-linux-musl
+            asset: awic-linux-aarch64
+            runner: ubuntu-24.04-arm
+          # Cross-built: .cargo/config.toml links it with rust-lld.
+          - target: armv7-unknown-linux-musleabihf
+            asset: awic-linux-armv7
+            runner: ubuntu-latest
+            qemu: qemu-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+      ASSET: ${{ matrix.asset }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
+      - name: Install rustup if missing
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
       - run: rustup target add ${{ env.TARGET }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -130,28 +192,56 @@ jobs:
           sed -i "0,/^version = .*/s//version = \"${GITHUB_REF_NAME#v}\"/" crates/awic-server/Cargo.toml
           cargo update --workspace
       # Every dependency is pure Rust on Linux (no -sys crate links C), so
-      # the musl target needs no cross toolchain and yields a static binary.
+      # the musl targets need no cross toolchain and yield a static binary.
+      # The linker strips it, which works the same for every target.
       - name: Build
         run: >
           cargo build --release --locked
           --target ${{ env.TARGET }}
           -p awic-server --bin awic --features embed-web
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
+      - if: matrix.qemu
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
       - name: Package
         run: |
           install -m 755 target/${{ env.TARGET }}/release/awic "$ASSET"
-          strip "$ASSET"
           file "$ASSET"
           # Fail if anything slipped in that would make it dynamic.
           file "$ASSET" | grep -q 'static'
+          # It starts on its target (natively or under qemu).
+          ${{ matrix.qemu }} "./$ASSET" --help > /dev/null
           sha256sum "$ASSET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  # SBOMs and license notices: from metadata only, so one x86_64 job makes
+  # them for every target.
+  notices:
+    name: SBOMs and license notices
+    needs: [rust, test-arm, web, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set version from release tag
+        if: github.event_name == 'release'
+        run: |
+          sed -i "0,/^version = .*/s//version = \"${GITHUB_REF_NAME#v}\"/" crates/awic-server/Cargo.toml
+          cargo update --workspace
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-cyclonedx
       - name: SBOM
         run: |
-          cargo cyclonedx --manifest-path crates/awic-server/Cargo.toml --format json \
-            --target ${{ env.TARGET }} --features embed-web --describe binaries
-          mv crates/awic-server/awic_bin.cdx.json "$ASSET.cdx.json"
+          for entry in $TARGETS; do
+            target="${entry%%:*}" asset="${entry#*:}"
+            cargo cyclonedx --manifest-path crates/awic-server/Cargo.toml --format json \
+              --target "$target" --features embed-web --describe binaries
+            mv crates/awic-server/awic_bin.cdx.json "$asset.cdx.json"
+          done
           npm sbom --prefix web --package-lock-only --omit dev --sbom-format cyclonedx > awic-web.cdx.json
       - uses: taiki-e/install-action@v2
         with:
@@ -168,9 +258,8 @@ jobs:
         run: tools/licenses/generate.sh THIRD-PARTY-LICENSES.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ASSET }}
+          name: awic-notices
           path: |
-            ${{ env.ASSET }}
             *.cdx.json
             THIRD-PARTY-LICENSES.txt
           if-no-files-found: error
@@ -178,14 +267,16 @@ jobs:
   release:
     name: Release files
     if: github.event_name == 'release'
-    needs: build
+    needs: [build, notices]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ env.ASSET }}
-      - run: gh release upload "$GITHUB_REF_NAME" "$ASSET" *.cdx.json THIRD-PARTY-LICENSES.txt --clobber --repo "$GITHUB_REPOSITORY"
+          pattern: awic-*
+          path: dist
+          merge-multiple: true
+      - run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}

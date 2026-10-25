@@ -61,7 +61,6 @@ native: frontend
 # everything compiled into the executable. Needs cargo-about
 # (`cargo install --locked cargo-about --features cli`).
 licenses: web/node_modules/.package-lock.json
-	rustup target add x86_64-unknown-linux-musl
 	tools/licenses/generate.sh THIRD-PARTY-LICENSES.txt
 
 # Run the server on the host, serving web/dist at http://127.0.0.1:8080/.

@@ -2,7 +2,8 @@
 # Writes THIRD-PARTY-LICENSES.txt: the license notices of everything compiled
 # into the release executable, which MIT, BSD and Apache-2.0 require to
 # accompany every copy, binary ones included. Three parts:
-#   1. Rust crates, from `cargo about` for the release target and features.
+#   1. Rust crates, from `cargo about` for the release targets (about.toml)
+#      and features.
 #   2. The Rust standard library and musl libc, linked statically: the
 #      notices the toolchain itself ships (COPYRIGHT-library.html).
 #   3. The web UI's runtime npm packages, compiled in by `embed-web`: each
@@ -16,7 +17,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$(dirname "$HERE")")"
 OUT="${1:-THIRD-PARTY-LICENSES.txt}"
-TARGET="${TARGET:-x86_64-unknown-linux-musl}"
 
 if [ ! -d "$ROOT/web/node_modules" ]; then
   echo "web/node_modules missing: run npm ci in web/ first" >&2
@@ -39,7 +39,6 @@ EOF
     -c "$HERE/about.toml" \
     --manifest-path "$ROOT/crates/awic-server/Cargo.toml" \
     --features embed-web \
-    --target "$TARGET" \
     "$HERE/about.hbs"
 
   cat <<'EOF'
