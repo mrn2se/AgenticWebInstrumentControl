@@ -48,10 +48,11 @@ impl Backend for Fx2lafwBackend {
     }
 
     async fn discover(&self) -> Result<Vec<DeviceId>> {
-        let devices = nusb::list_devices()
+        let devices = crate::fx2::list_devices()
             .await
             .map_err(|e| CoreError::Device(e.to_string()))?;
         Ok(devices
+            .into_iter()
             .filter(|d| d.vendor_id() == VENDOR_ID && d.product_id() == PRODUCT_ID)
             .map(|d| {
                 DeviceId::new(

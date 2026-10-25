@@ -79,10 +79,11 @@ impl Backend for Fx2ScopeBackend {
     }
 
     async fn discover(&self) -> Result<Vec<DeviceId>> {
-        let devices = nusb::list_devices()
+        let devices = crate::fx2::list_devices()
             .await
             .map_err(|e| CoreError::Device(e.to_string()))?;
         Ok(devices
+            .into_iter()
             .filter(|d| is_candidate(d.vendor_id(), d.product_id(), d.serial_number()))
             .map(|d| {
                 DeviceId::new(
