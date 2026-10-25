@@ -50,6 +50,7 @@ import { formatSampleRate, formatSiDuration, formatSiFrequency } from "../../for
 import {
   addMeasurementStatus,
   captureHeader,
+  snapshotSampleCount,
   requestMeasurement,
   measurementBlocks,
   measurementRows,
@@ -246,6 +247,12 @@ class GraphModule extends AwicModule {
   private liveList: RecListResult | null = null;
   private liveListTimer: ReturnType<typeof setInterval> | null = null;
   private liveSnapshotCapture: string | null = null;
+  /**
+   * The newest time a drawn Live frame reached, seconds. `rec.list` reports
+   * the recording's head once a second while frames move the view on every
+   * tick, so the zoom/pan limit takes whichever is further along.
+   */
+  private liveFrameHeadSeconds = 0;
   private readonly viewportDebouncer: Debouncer<void> = debounce(300, () => this.flushViewUpdate());
 
   private rendererId: RendererId = DEFAULT_RENDERER_ID;
@@ -648,7 +655,13 @@ class GraphModule extends AwicModule {
         // a digital-runs frame's `item_count` counts runs, not samples.
         if (this.liveViewState.following) {
           const bounds = tracesTimeBounds(traces);
-          if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
+          if (bounds) {
+            renderer.setViewport(bounds.t0, bounds.t1);
+            if (bounds.t1 > this.liveFrameHeadSeconds) {
+              this.liveFrameHeadSeconds = bounds.t1;
+              this.renderTimeLimits();
+            }
+          }
         }
       }),
     );
@@ -1278,7 +1291,10 @@ class GraphModule extends AwicModule {
       renderer.setTimeLimits(null);
       return;
     }
-    renderer.setTimeLimits({ t0: summary.first_sample / summary.rate_hz, t1: headSeconds(summary) });
+    renderer.setTimeLimits({
+      t0: summary.first_sample / summary.rate_hz,
+      t1: Math.max(headSeconds(summary), this.liveFrameHeadSeconds),
+    });
   }
 
   private markPlotHasData(): void {
@@ -1473,6 +1489,7 @@ class GraphModule extends AwicModule {
       }
 
       this.liveRecId = recId;
+      this.liveFrameHeadSeconds = 0;
       // `pickRecordingToAttach` is an `Array.find`, so "nothing to attach to" is
       // `undefined`, not `null`: `existing === null` was false either way and
       // the tab never treated a recording as its own, so B-68's cleanup never
@@ -1752,7 +1769,11 @@ class GraphModule extends AwicModule {
         capture: result.capture,
         takenAtMs: Date.now(),
         rateHz: this.liveRateHz,
-        samples: Math.max(0, Math.round((range.t1 - range.t0) * this.liveRateHz)),
+        samples: snapshotSampleCount(
+          range,
+          this.liveRateHz,
+          this.liveRecordings.find((r) => r.rec === rec)?.head_sample,
+        ),
         source: "snapshot",
       });
       this.refreshImageControls();

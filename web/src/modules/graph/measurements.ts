@@ -171,6 +171,25 @@ export interface CaptureInfo {
   readonly source: "single" | "snapshot";
 }
 
+/**
+ * How many samples `rec.snapshot` stores for `range`, worked out the way the
+ * server does it: each end rounded to a sample, negative times taken as 0,
+ * and the end cut at the recording's head (`headSample`, from `rec.list`;
+ * omitted when not known). The visible range of a Live view can reach past
+ * the head, so its plain duration overstated the snapshot.
+ */
+export function snapshotSampleCount(
+  range: { readonly t0: number; readonly t1: number },
+  rateHz: number,
+  headSample?: number,
+): number {
+  if (!(rateHz > 0)) return 0;
+  const start = Math.max(0, Math.round(range.t0 * rateHz));
+  let end = Math.max(0, Math.round(range.t1 * rateHz));
+  if (headSample !== undefined) end = Math.min(end, headSample);
+  return Math.max(0, end - start);
+}
+
 /** How many measurement requests the panel keeps, across all captures. */
 const MAX_STATUSES = 20;
 

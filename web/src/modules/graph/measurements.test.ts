@@ -8,6 +8,7 @@ import {
   measurementBlocks,
   measurementRows,
   requestMeasurement,
+  snapshotSampleCount,
   type MeasurementStatus,
   type MeasurementRequest,
   type SendCaptureMeasure,
@@ -192,5 +193,23 @@ describe("measurement blocks per capture", () => {
     expect(captureHeader({ capture: "capture://a", takenAtMs, rateHz: 1e6, samples: 10000, source: "single" })).toBe(
       "Capture 14:03:22 · 1 MS/s · 10\u202f000 samples",
     );
+  });
+});
+
+describe("snapshotSampleCount", () => {
+  it("counts the samples between the rounded ends", () => {
+    expect(snapshotSampleCount({ t0: 0.001, t1: 0.003 }, 1e6)).toBe(2000);
+  });
+
+  it("cuts the end at the recording's head", () => {
+    expect(snapshotSampleCount({ t0: 0.001, t1: 0.003 }, 1e6, 2500)).toBe(1500);
+  });
+
+  it("takes negative times as zero", () => {
+    expect(snapshotSampleCount({ t0: -0.001, t1: 0.001 }, 1e6)).toBe(1000);
+  });
+
+  it("is zero without a rate", () => {
+    expect(snapshotSampleCount({ t0: 0, t1: 1 }, 0)).toBe(0);
   });
 });

@@ -149,6 +149,16 @@ describe("clampViewport", () => {
     expect(right.t1 - right.t0).toBeCloseTo(10, 10);
   });
 
+  it("keeps at least half of a deeply zoomed view on the data", () => {
+    // A 1-wide view would fit entirely inside the 2-wide fit-all padding.
+    const right = clampViewport({ t0: 500, t1: 501 }, extent);
+    expect(right.t0).toBeCloseTo(99.5, 10);
+    expect(right.t1).toBeCloseTo(100.5, 10);
+    const left = clampViewport({ t0: -500, t1: -499 }, extent);
+    expect(left.t0).toBeCloseTo(-0.5, 10);
+    expect(left.t1).toBeCloseTo(0.5, 10);
+  });
+
   it("does nothing without an extent", () => {
     expect(clampViewport({ t0: -40, t1: -30 }, null)).toEqual({ t0: -40, t1: -30 });
   });

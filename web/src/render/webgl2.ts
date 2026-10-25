@@ -161,6 +161,8 @@ class Webgl2Renderer implements WaveformRenderer {
   private pending: PendingItem[] = [];
   private drawables: Drawable[] = [];
   private originSeconds = 0;
+  /** The traces' time extent, computed once per `setTraces()`: a wheel tick or a drag step must not scan the whole capture. */
+  private traceBounds: Viewport | null = null;
 
   private viewport: Viewport | null = null;
   private theme: ThemeColors | null = null;
@@ -215,7 +217,7 @@ class Webgl2Renderer implements WaveformRenderer {
   };
 
   private readonly handleDoubleClick = (): void => {
-    const bounds = traceSetTimeBounds(this.traces.traces);
+    const bounds = this.traceBounds;
     if (!bounds) return;
     this.viewport = fitAllViewport(bounds);
     this.notifyViewportChange();
@@ -228,7 +230,7 @@ class Webgl2Renderer implements WaveformRenderer {
    * double-click used to bring it back.
    */
   private applyUserViewport(next: Viewport): void {
-    const clamped = clampViewport(next, this.timeLimits ?? traceSetTimeBounds(this.traces.traces));
+    const clamped = clampViewport(next, this.timeLimits ?? this.traceBounds);
     if (this.viewport && clamped.t0 === this.viewport.t0 && clamped.t1 === this.viewport.t1) return;
     this.viewport = clamped;
     this.notifyViewportChange();
@@ -325,7 +327,7 @@ class Webgl2Renderer implements WaveformRenderer {
     this.buildCpuGeometry();
     this.uploadToGpu();
     if (!this.viewport) {
-      const bounds = traceSetTimeBounds(traces.traces);
+      const bounds = this.traceBounds;
       if (bounds) {
         this.viewport = fitAllViewport(bounds);
         // The graph module has no other way to learn the range this
@@ -388,6 +390,7 @@ class Webgl2Renderer implements WaveformRenderer {
     this.theme = null;
     this.trigger = null;
     this.timeLimits = null;
+    this.traceBounds = null;
     this.dragState = null;
     this.listeners.clear();
   }
@@ -428,6 +431,7 @@ class Webgl2Renderer implements WaveformRenderer {
   private buildCpuGeometry(): void {
     const traces = this.traces.traces;
     const bounds = traceSetTimeBounds(traces);
+    this.traceBounds = bounds;
     this.originSeconds = bounds?.t0 ?? 0;
     const index = panelIndex(this.layout);
     const items: PendingItem[] = [];

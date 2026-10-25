@@ -80,21 +80,26 @@ export function fitAllViewport(bounds: Viewport, paddingFraction = 0.02): Viewpo
 }
 
 /**
- * Keeps a user zoom or pan inside `extent`'s fit-all view: the span never
- * grows past it, and the window slides back inside it rather than showing
- * empty time beside the data, or none of the data at all. `extent` is the
- * data's own time range; a `null` extent (nothing drawn yet) leaves the
- * viewport as it is.
+ * Keeps a user zoom or pan inside the data: the span never grows past
+ * `extent`'s fit-all view, and the window slides back so that at least half
+ * of it shows data. The margin allowed past either edge is the fit-all
+ * padding or half the visible span, whichever is smaller — a fixed margin
+ * let a deeply zoomed view rest entirely in the padding, showing nothing.
+ * `extent` is the data's own time range; a `null` extent (nothing drawn
+ * yet) leaves the viewport as it is.
  */
 export function clampViewport(viewport: Viewport, extent: Viewport | null): Viewport {
   if (!extent) return viewport;
-  const limit = fitAllViewport(extent);
-  const maxSpan = limit.t1 - limit.t0;
+  const fit = fitAllViewport(extent);
+  const maxSpan = fit.t1 - fit.t0;
   const span = Math.min(viewport.t1 - viewport.t0, maxSpan);
   if (!(span > 0)) return viewport;
+  const margin = Math.min(extent.t0 - fit.t0, span / 2);
+  const lo = extent.t0 - margin;
+  const hi = extent.t1 + margin;
   let t0 = viewport.t0;
-  if (t0 < limit.t0) t0 = limit.t0;
-  if (t0 + span > limit.t1) t0 = limit.t1 - span;
+  if (t0 < lo) t0 = lo;
+  if (t0 + span > hi) t0 = hi - span;
   return { t0, t1: t0 + span };
 }
 

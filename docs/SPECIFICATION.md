@@ -864,8 +864,9 @@ The WebGL2 renderer, `render/webgl2.ts`, no dependencies:
 - **Interaction**: the wheel and a trackpad pinch zoom time about the cursor; a sideways swipe or
   Shift+wheel pans, as does dragging; double-click fits. Wheel deltas reported in lines or pages
   are converted to pixels first, so a line-mode mouse zooms as fast as a pixel-mode one. Zoom-out
-  stops at the fit-all view and a pan cannot push the data off screen: the view is kept inside
-  the data (in Live mode, inside the recording's retained span, so history stays reachable).
+  stops at the fit-all view and a pan cannot push the data off screen: at least half of the
+  visible window always shows data (in Live mode, data of the recording's retained span, whose
+  newest end advances with every drawn frame, so history stays reachable).
   `setViewport()` itself is not limited. Each user change is reported through
   `onViewportChange`. Cursors are vertical rules the graph module owns.
 - **Fit on a new capture**: the first frame of every new Single capture sets the viewport to that
