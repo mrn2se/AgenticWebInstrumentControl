@@ -125,7 +125,12 @@ export interface WheelInput {
   readonly shiftKey: boolean;
   /** Set by browsers for a trackpad pinch as well as Ctrl+wheel. */
   readonly ctrlKey: boolean;
+  /** Whether the browser reported the deltas in pixels (`deltaMode === 0`); a pinch always is. */
+  readonly pixelDeltas: boolean;
 }
+
+/** A pinch reports deltas of a few pixels; a mouse wheel notch with Ctrl held reports ~100 (Chrome) or lines. */
+const PINCH_MAX_DELTA_PX = 50;
 
 export type WheelAction =
   | { readonly kind: "zoom"; readonly factor: number }
@@ -140,11 +145,13 @@ export type WheelAction =
  */
 export function wheelAction(input: WheelInput): WheelAction {
   const { dx, dy } = input;
-  if (input.ctrlKey) {
+  if (input.ctrlKey && input.pixelDeltas && Math.abs(dy) < PINCH_MAX_DELTA_PX) {
     // A pinch reports small deltas many times a second; it needs a steeper
-    // response than a wheel notch to feel the same.
+    // response than a wheel notch to feel the same. Ctrl+wheel on a mouse
+    // falls through to the plain wheel's gain below.
     return dy === 0 ? { kind: "none" } : { kind: "zoom", factor: Math.exp(dy * 0.01) };
   }
+  if (input.ctrlKey) return dy === 0 ? { kind: "none" } : { kind: "zoom", factor: Math.exp(dy * 0.002) };
   if (input.shiftKey) {
     // Some browsers already turn Shift+wheel into a horizontal delta.
     const px = dx !== 0 ? dx : dy;

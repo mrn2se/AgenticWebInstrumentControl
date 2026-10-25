@@ -179,7 +179,7 @@ describe("wheelDeltaPixels", () => {
 });
 
 describe("wheelAction", () => {
-  const base = { dx: 0, dy: 0, shiftKey: false, ctrlKey: false };
+  const base = { dx: 0, dy: 0, shiftKey: false, ctrlKey: false, pixelDeltas: true };
 
   it("zooms out on a plain wheel down and in on a wheel up", () => {
     const out = wheelAction({ ...base, dy: 100 });
@@ -199,6 +199,15 @@ describe("wheelAction", () => {
 
   it("zooms on a pinch (Ctrl) even with a horizontal component", () => {
     expect(wheelAction({ ...base, dx: 40, dy: 5, ctrlKey: true }).kind).toBe("zoom");
+  });
+
+  it("zooms Ctrl+mouse-wheel at the plain wheel's rate, not the pinch gain", () => {
+    const plain = wheelAction({ ...base, dy: 100 });
+    const ctrl = wheelAction({ ...base, dy: 100, ctrlKey: true });
+    const ctrlLines = wheelAction({ ...base, dy: 48, ctrlKey: true, pixelDeltas: false });
+    const plainLines = wheelAction({ ...base, dy: 48, pixelDeltas: false });
+    expect(ctrl).toEqual(plain);
+    expect(ctrlLines).toEqual(plainLines);
   });
 
   it("does nothing for an empty event", () => {

@@ -183,6 +183,7 @@ class Webgl2Renderer implements WaveformRenderer {
       dy: wheelDeltaPixels(e.deltaY, e.deltaMode, rect.height),
       shiftKey: e.shiftKey,
       ctrlKey: e.ctrlKey,
+      pixelDeltas: e.deltaMode === 0,
     });
     if (action.kind === "none") return;
     e.preventDefault();

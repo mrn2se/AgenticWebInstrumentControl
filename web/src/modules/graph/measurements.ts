@@ -174,19 +174,23 @@ export interface CaptureInfo {
 /**
  * How many samples `rec.snapshot` stores for `range`, worked out the way the
  * server does it: each end rounded to a sample, negative times taken as 0,
- * and the end cut at the recording's head (`headSample`, from `rec.list`;
+ * and the range kept inside what the recording still holds — from its first
+ * retained sample to its head (`rec.list`'s `first_sample`/`head_sample`;
  * omitted when not known). The visible range of a Live view can reach past
- * the head, so its plain duration overstated the snapshot.
+ * either, so its plain duration overstated the snapshot.
  */
 export function snapshotSampleCount(
   range: { readonly t0: number; readonly t1: number },
   rateHz: number,
-  headSample?: number,
+  retained?: { readonly first_sample: number; readonly head_sample: number },
 ): number {
   if (!(rateHz > 0)) return 0;
-  const start = Math.max(0, Math.round(range.t0 * rateHz));
+  let start = Math.max(0, Math.round(range.t0 * rateHz));
   let end = Math.max(0, Math.round(range.t1 * rateHz));
-  if (headSample !== undefined) end = Math.min(end, headSample);
+  if (retained) {
+    start = Math.max(start, retained.first_sample);
+    end = Math.min(end, retained.head_sample);
+  }
   return Math.max(0, end - start);
 }
 
@@ -213,8 +217,16 @@ export interface MeasurementBlock {
   readonly statuses: readonly MeasurementStatus[];
 }
 
-/** Groups statuses by capture, newest capture first (the order statuses are kept in). */
-export function measurementBlocks(statuses: readonly MeasurementStatus[]): MeasurementBlock[] {
+/**
+ * Groups statuses by capture, newest capture first. `takenAt` gives a
+ * capture's time when known; blocks are sorted by it, so re-measuring an old
+ * capture does not lift its block above the current one. Captures without a
+ * time keep the order their results were requested in, after the rest.
+ */
+export function measurementBlocks(
+  statuses: readonly MeasurementStatus[],
+  takenAt: (capture: string) => number | undefined = () => undefined,
+): MeasurementBlock[] {
   const blocks: { capture: string; statuses: MeasurementStatus[] }[] = [];
   for (const status of statuses) {
     const capture = status.request.capture;
@@ -225,7 +237,9 @@ export function measurementBlocks(statuses: readonly MeasurementStatus[]): Measu
     }
     block.statuses.push(status);
   }
-  return blocks;
+  // A stable sort: equal keys (two unknown times) keep their order.
+  const key = (b: MeasurementBlock): number => takenAt(b.capture) ?? -Infinity;
+  return blocks.sort((a, b) => key(b) - key(a));
 }
 
 function formatClockTime(ms: number): string {

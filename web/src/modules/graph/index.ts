@@ -106,6 +106,8 @@ const POPOVER_ROW = "flex flex-wrap items-center gap-2 text-sm";
 const SIDE_SECTION_TITLE = "mb-1.5 text-sm font-semibold";
 /** Below this window width the side panel is a drawer over the plot; the `max-[900px]:` classes on it say the same. */
 const SIDE_PANEL_DRAWER_PX = 900;
+/** How long Live frames from the view just left are skipped before they are drawn again (see the view-frame handler). */
+const LIVE_VIEW_CHANGE_GRACE_MS = 2000;
 
 const ACQ_STATUS_CLASS: Record<string, string> = {
   running: "text-awic-ok",
@@ -206,6 +208,9 @@ class GraphModule extends AwicModule {
   private decodeFramesEl!: HTMLElement;
 
   private unsubscribers: Array<() => void> = [];
+  /** Whether the side panel is wanted on a wide window: the Panel button's last choice there. */
+  private sidePanelOpenWide = true;
+  private narrowLayout: MediaQueryList | null = null;
   private plotResizeObserver: ResizeObserver | null = null;
 
   private devices: readonly DeviceInfo[] = [];
@@ -253,6 +258,8 @@ class GraphModule extends AwicModule {
    * tick, so the zoom/pan limit takes whichever is further along.
    */
   private liveFrameHeadSeconds = 0;
+  /** When Live last switched between following and a fixed range, `performance.now()` ms. */
+  private liveViewChangedAt = 0;
   private readonly viewportDebouncer: Debouncer<void> = debounce(300, () => this.flushViewUpdate());
 
   private rendererId: RendererId = DEFAULT_RENDERER_ID;
@@ -295,6 +302,8 @@ class GraphModule extends AwicModule {
   private plotHasData = false;
   /** Where the trigger of the Single capture on screen fired, if it was triggered. */
   private captureTrigger: TriggerMarker | null = null;
+  /** The stream this tab started itself: only its configuration (`effective`) is known here. */
+  private ownStreamId: number | null = null;
   /** A redraw of `streamTraces` already scheduled; frames arriving meanwhile join it. */
   private streamDrawTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -577,11 +586,15 @@ class GraphModule extends AwicModule {
     // always showing measurements. Crossing the width later does the same,
     // so a window narrowed with the panel open does not leave the plot a
     // sliver beside it.
-    const narrow = window.matchMedia(`(max-width: ${SIDE_PANEL_DRAWER_PX}px)`);
+    // `max-width: 899.98px`, not `900px`: Tailwind's `max-[900px]:` is
+    // `width < 900px`, and the two must agree at exactly 900 px. Going wide
+    // restores whatever the Panel button last chose on a wide window.
+    const narrow = window.matchMedia(`(max-width: ${SIDE_PANEL_DRAWER_PX - 0.02}px)`);
     this.sidePanelEl.hidden = narrow.matches;
     narrow.addEventListener("change", (e) => {
-      this.sidePanelEl.hidden = e.matches;
+      this.sidePanelEl.hidden = e.matches || !this.sidePanelOpenWide;
     });
+    this.narrowLayout = narrow;
     this.renderPlotHint();
     // Subscriptions/timers start in activate() so an inactive-but-mounted module does no background work.
   }
@@ -637,8 +650,18 @@ class GraphModule extends AwicModule {
         // frame after a zoom or pan, or a fixed-range one after Follow. Drawn,
         // they replaced the traces with data outside the new view and the
         // plot went blank until the server caught up; skipped, the old traces
-        // stay on screen, scaled, until the right data arrives.
-        if (frame.header.flags.follow !== this.liveViewState.following) return;
+        // stay on screen, scaled, until the right data arrives. Only for a
+        // while, though: if the view change never reached the server, its
+        // frames keep the old flag, and skipping them for good would freeze
+        // the plot. Past the grace period they are drawn and the change is
+        // sent again.
+        if (frame.header.flags.follow !== this.liveViewState.following) {
+          if (performance.now() - this.liveViewChangedAt < LIVE_VIEW_CHANGE_GRACE_MS) return;
+          this.liveViewChangedAt = performance.now();
+          this.recStatusEl.textContent = "view change not applied yet — sending it again";
+          this.recStatusEl.title = this.recStatusEl.textContent;
+          this.flushViewUpdate();
+        }
         const traces = viewFrameToTraces(frame, { rateHz: this.liveRateHz, channels: this.liveChannels });
         renderer.setTraces({ traces });
         this.liveFrameCount += 1;
@@ -955,8 +978,6 @@ class GraphModule extends AwicModule {
     this.snapshotSectionEl.hidden = mode !== "live";
     // "not recording" means nothing in Single mode.
     if (mode === "single") this.recStatusEl.textContent = "";
-    this.renderTriggerMarker();
-    this.renderTimeLimits();
     this.searchSectionEl.hidden = mode !== "live";
     this.renderChannelControls(); // Measure buttons only show in Single mode
     this.refreshImageControls();
@@ -1116,7 +1137,7 @@ class GraphModule extends AwicModule {
     this.viewEndEl.value = String(t1);
     if (this.mode === "single") this.streamViewFollows = false;
     if (this.mode === "live" && this.liveViewId !== null) {
-      this.liveViewState = pauseAtViewport(t0, t1);
+      this.setLiveViewState(pauseAtViewport(t0, t1));
       this.renderLiveStatus();
       this.viewportDebouncer.call(undefined);
       // SPEC T21: "Live mode re-decodes the visible range when the view
@@ -1168,6 +1189,7 @@ class GraphModule extends AwicModule {
         source: "single",
       });
       this.acqState = applyStreamStarted(this.acqState, started);
+      this.ownStreamId = started.stream;
       this.renderAcqStatus();
       this.resetDecodeResults(); // a fresh capture invalidates any previously decoded annotations
       this.refreshImageControls();
@@ -1258,6 +1280,10 @@ class GraphModule extends AwicModule {
    * has none to draw.
    */
   private triggerMarkerForCapture(): TriggerMarker | null {
+    // A capture an agent or another tab started on this device carries its
+    // own trigger, which this tab does not know: no marker rather than one
+    // for a trigger that was not used.
+    if (this.streamTracesFor === null || this.streamTracesFor !== this.ownStreamId) return null;
     const cfg = this.effective?.cfg;
     const trigger = cfg?.trigger;
     const rateHz = this.streamRateHz();
@@ -1654,9 +1680,25 @@ class GraphModule extends AwicModule {
   private onFollowClick(): void {
     if (this.liveViewId === null) return;
     this.viewportDebouncer.cancel();
-    this.liveViewState = resumeFollowing();
+    this.setLiveViewState(resumeFollowing());
     this.renderLiveStatus();
     this.flushViewUpdate();
+  }
+
+  /** Every user-driven change of the Live view goes through here, so the frame filter knows when it changed. */
+  private setLiveViewState(next: LiveViewState): void {
+    if (next.following !== this.liveViewState.following) this.liveViewChangedAt = performance.now();
+    this.liveViewState = next;
+  }
+
+  /**
+   * A `rec.view.update` that failed: a refusal from the server is already on
+   * the error banner, but a dropped connection or a timeout is not, so say
+   * it on the status line. The frame filter sends it again.
+   */
+  private onViewUpdateFailed(): void {
+    this.recStatusEl.textContent = "could not change the view — retrying";
+    this.recStatusEl.title = this.recStatusEl.textContent;
   }
 
   /** Sends `rec.view.update` for the current (following or fixed) state — the debounced target for pan/zoom/resize, and also called immediately for a deliberate action (Follow, a search-result click). */
@@ -1667,11 +1709,11 @@ class GraphModule extends AwicModule {
     if (this.liveViewState.following) {
       this.ctx.ws
         .send("rec.view.update", { view, follow_s: followWindowSeconds(this.currentFollowWindowSeconds()), columns })
-        .catch(() => {});
+        .catch(() => this.onViewUpdateFailed());
     } else if (this.liveViewState.t0 !== null && this.liveViewState.t1 !== null) {
       this.ctx.ws
         .send("rec.view.update", { view, t0_s: this.liveViewState.t0, t1_s: this.liveViewState.t1, columns })
-        .catch(() => {});
+        .catch(() => this.onViewUpdateFailed());
     }
   }
 
@@ -1769,11 +1811,7 @@ class GraphModule extends AwicModule {
         capture: result.capture,
         takenAtMs: Date.now(),
         rateHz: this.liveRateHz,
-        samples: snapshotSampleCount(
-          range,
-          this.liveRateHz,
-          this.liveRecordings.find((r) => r.rec === rec)?.head_sample,
-        ),
+        samples: snapshotSampleCount(range, this.liveRateHz, this.liveRecordings.find((r) => r.rec === rec)),
         source: "snapshot",
       });
       this.refreshImageControls();
@@ -1866,7 +1904,7 @@ class GraphModule extends AwicModule {
     const window = followWindowSeconds(this.currentFollowWindowSeconds());
     const t0 = tSeconds - window / 2;
     const t1 = tSeconds + window / 2;
-    this.liveViewState = pauseAtViewport(t0, t1);
+    this.setLiveViewState(pauseAtViewport(t0, t1));
     this.renderer?.setViewport(t0, t1);
     this.renderLiveStatus();
     this.flushViewUpdate();
@@ -1952,6 +1990,13 @@ class GraphModule extends AwicModule {
     return wrapper;
   }
 
+  /** Keeps capture details only for captures that still have results, or may get some (the ones on screen). */
+  private pruneCaptureInfos(): void {
+    const keep = new Set(this.measurementStatuses.map((s) => s.request.capture));
+    for (const capture of [this.acqState.captureHandle, this.liveSnapshotCapture]) if (capture) keep.add(capture);
+    for (const capture of [...this.captureInfos.keys()]) if (!keep.has(capture)) this.captureInfos.delete(capture);
+  }
+
   /**
    * One block per capture, newest first, each headed with when it was taken,
    * its rate and its length. Results from a capture that is no longer the one
@@ -1979,7 +2024,8 @@ class GraphModule extends AwicModule {
     });
     this.measurementsEl.appendChild(clear);
 
-    for (const block of measurementBlocks(this.measurementStatuses)) {
+    this.pruneCaptureInfos();
+    for (const block of measurementBlocks(this.measurementStatuses, (c) => this.captureInfos.get(c)?.takenAtMs)) {
       const stale = block.capture !== current;
       const section = document.createElement("div");
       section.className = `mb-3 ${stale ? "opacity-60" : ""}`;
@@ -2404,6 +2450,7 @@ class GraphModule extends AwicModule {
     this.modeLiveEl.addEventListener("click", () => this.setMode("live"));
     this.panelToggleEl.addEventListener("click", () => {
       this.sidePanelEl.hidden = !this.sidePanelEl.hidden;
+      if (!this.narrowLayout?.matches) this.sidePanelOpenWide = !this.sidePanelEl.hidden;
     });
     this.rendererSelectEl.addEventListener("change", () => {
       this.rendererId = this.rendererSelectEl.value as RendererId;
@@ -2453,7 +2500,7 @@ class GraphModule extends AwicModule {
     if (!Number.isFinite(t0) || !Number.isFinite(t1) || !this.renderer) return;
     this.renderer.setViewport(t0, t1);
     if (this.mode === "live" && this.liveViewId !== null) {
-      this.liveViewState = pauseAtViewport(t0, t1);
+      this.setLiveViewState(pauseAtViewport(t0, t1));
       this.renderLiveStatus();
       this.flushViewUpdate();
       if (this.decodeActive) this.decodeDebouncer.call(undefined);

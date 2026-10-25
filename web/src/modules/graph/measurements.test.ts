@@ -181,6 +181,15 @@ describe("measurement blocks per capture", () => {
     expect(blocks[0]!.statuses.map((s) => s.request.channel)).toEqual([1, 0]);
   });
 
+  it("orders blocks by capture time, not by the last Measure click", () => {
+    let statuses: MeasurementStatus[] = [];
+    statuses = addMeasurementStatus(statuses, ok("capture://a", 0));
+    statuses = addMeasurementStatus(statuses, ok("capture://b", 0));
+    statuses = addMeasurementStatus(statuses, ok("capture://a", 1)); // re-measure the older capture
+    const times: Record<string, number> = { "capture://a": 1000, "capture://b": 2000 };
+    expect(measurementBlocks(statuses, (c) => times[c]).map((b) => b.capture)).toEqual(["capture://b", "capture://a"]);
+  });
+
   it("replaces an earlier measurement of the same channel of the same capture", () => {
     let statuses: MeasurementStatus[] = [];
     statuses = addMeasurementStatus(statuses, ok("capture://a", 0));
@@ -201,8 +210,9 @@ describe("snapshotSampleCount", () => {
     expect(snapshotSampleCount({ t0: 0.001, t1: 0.003 }, 1e6)).toBe(2000);
   });
 
-  it("cuts the end at the recording's head", () => {
-    expect(snapshotSampleCount({ t0: 0.001, t1: 0.003 }, 1e6, 2500)).toBe(1500);
+  it("keeps the range inside what the recording still holds", () => {
+    expect(snapshotSampleCount({ t0: 0.001, t1: 0.003 }, 1e6, { first_sample: 0, head_sample: 2500 })).toBe(1500);
+    expect(snapshotSampleCount({ t0: 0.001, t1: 0.003 }, 1e6, { first_sample: 1800, head_sample: 5000 })).toBe(1200);
   });
 
   it("takes negative times as zero", () => {

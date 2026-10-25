@@ -857,11 +857,13 @@ The WebGL2 renderer, `render/webgl2.ts`, no dependencies:
   per 28 px of lane height) and the scale next to the channel name (`CH1 · 1 V/div`); channel names
   per lane. Every label sits on a backdrop of the plot background, so a trace crossing it never
   makes it unreadable.
-- **Trigger marker**: a triggered Single capture shows a "T" flag at the top of the plot at the
-  trigger time (the capture midpoint), with a faint line through all lanes, and on an analog
-  trigger channel a dashed line at the trigger level, labelled at the right edge. Plotly does not
-  draw it.
-- **Interaction**: the wheel and a trackpad pinch zoom time about the cursor; a sideways swipe or
+- **Trigger marker**: a triggered Single capture started from this tab shows a "T" flag at the top
+  of the plot at the trigger time (the capture midpoint); a capture started elsewhere (an agent,
+  another tab) shows none, since its trigger is not known here. The flag comes with a faint line
+  through all lanes, and on an analog trigger channel a dashed line at the trigger level,
+  labelled at the right edge. Plotly does not draw it.
+- **Interaction**: the wheel and a trackpad pinch zoom time about the cursor (Ctrl+wheel on a
+  mouse at the wheel's rate; only small pixel deltas get the steeper pinch response); a sideways swipe or
   Shift+wheel pans, as does dragging; double-click fits. Wheel deltas reported in lines or pages
   are converted to pixels first, so a line-mode mouse zooms as fast as a pixel-mode one. Zoom-out
   stops at the fit-all view and a pan cannot push the data off screen: at least half of the
@@ -892,9 +894,10 @@ The graph runs in one of two modes, chosen in the toolbar:
 In Live mode, zooming or panning **pauses following** without pausing the recording: the view
 switches to a fixed range served from history (`rec.view.update`), and a *Follow* button resumes
 the tail. View frames still in flight for the view just left (a follow frame after a pause, a
-fixed-range frame after *Follow*; the header's follow flag tells them apart) are skipped, so the
-old traces stay on screen, scaled, until the new range arrives — the plot never blanks while
-zooming. *Follow*, *Snapshot* and *Trigger* are always on the toolbar and disabled, with a tooltip
+fixed-range frame after *Follow*; the header's follow flag tells them apart) are skipped for up
+to 2 s, so the old traces stay on screen, scaled, until the new range arrives — the plot never
+blanks while zooming. If frames still carry the old flag after that, the view change is sent
+again, those frames are drawn meanwhile, and the status line says so. *Follow*, *Snapshot* and *Trigger* are always on the toolbar and disabled, with a tooltip
 saying why, when they do not apply. The toolbar shows the retained span and the memory in use, so a user can see how far
 back they can scroll. *Snapshot* turns the visible range into a capture (§2.8.5) for measurements.
 A pattern search box (§2.9) lists matches as clickable timestamps that jump the view.
@@ -1453,7 +1456,8 @@ as pretty-printed JSON, each cut at 64 KB. Pictures a result carried (`render_vi
 out of the response text, replaced there by a placeholder, and shown as thumbnails under their
 row whether it is expanded or not; a click enlarges one. Filters: free text, session, errors
 only, screenshots only; *Follow* keeps the newest row in view. *Follow* tracks the scroll position
-the way a terminal does: scrolling up to read an older row unticks it, so new messages no longer
+the way a terminal does (only scrolls the user makes count, not the browser re-clamping the
+position after a filter hides rows): scrolling up to read an older row unticks it, so new messages no longer
 pull the view down; scrolling back to the bottom ticks it again. Changing a filter, a screenshot
 finishing loading and returning to the tab all keep the newest row in view while it is ticked.
 
@@ -1678,7 +1682,8 @@ The main element — plot or terminal — owns the viewport; configuration moves
   labelled in samples per second (`16 MS/s`, `62.5 kS/s`).
 - Measurements and search results live in a **collapsible side panel**. Below 900 px window width
   it is closed and, when opened, is a drawer over the plot's right edge instead of a column
-  beside it; crossing that width closes or opens it accordingly.
+  beside it. Narrowing past that width closes it; widening again restores whatever the *Panel*
+  button last chose on a wide window.
 - **No page scroll** at any size: the app is exactly the viewport's height, every tab scrolls
   inside its own pane (the USB tree included), and the plot fills the remaining height, always
   from a definite-height container (the Plotly growth bug).

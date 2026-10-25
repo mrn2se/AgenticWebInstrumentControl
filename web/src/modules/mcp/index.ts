@@ -31,6 +31,9 @@ const BADGE_OK = "bg-awic-ok-bg text-awic-ok";
 const BADGE_ERR = "bg-awic-danger-bg text-awic-danger";
 const BADGE_INFO = "bg-awic-bg text-awic-fg-muted";
 
+/** How long after a wheel, touch or key on the log a `scroll` event still counts as the user's. Smooth scrolling runs a few hundred ms. */
+const USER_SCROLL_WINDOW_MS = 600;
+
 /** Coalesces bursts of `mcp.activity` (an agent calling tools back to back). */
 const FETCH_DEBOUNCE_MS = 200;
 /** How many entries the first fetch asks for. */
@@ -117,6 +120,10 @@ class McpModule extends AwicModule {
   private activeSnippet = "vscode";
 
   private active = false;
+  /** When the user last wheeled, touched or pressed a key on the log (`performance.now()` ms). */
+  private lastScrollIntentMs = -Infinity;
+  /** A pointer went down on the log (a scrollbar drag, say) and has not come up yet. */
+  private pointerOnLog = false;
   private dirtyLog = true;
   private dirtyStatus = true;
   private fetchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -231,11 +238,27 @@ class McpModule extends AwicModule {
     this.followEl.addEventListener("change", () => {
       if (this.followEl.checked) this.scrollToEnd();
     });
-    // Follow tracks where the log is scrolled: up to read unticks it, so the
-    // next message does not yank the view back down; the bottom ticks it
-    // again. A scroll this module makes itself lands at the bottom, so it
-    // never unticks anything.
+    // Follow tracks where the user scrolls the log: up to read unticks it,
+    // so the next message does not yank the view back down; the bottom ticks
+    // it again. Only scrolls the user makes count — the browser also fires
+    // `scroll` when it clamps the position after a filter hides rows, and
+    // that must not tick Follow behind the user's back.
+    const markIntent = (): void => {
+      this.lastScrollIntentMs = performance.now();
+    };
+    for (const type of ["wheel", "touchmove", "keydown"] as const) {
+      this.logEl.addEventListener(type, markIntent, { passive: true });
+    }
+    this.logEl.addEventListener("pointerdown", () => {
+      this.pointerOnLog = true;
+    });
+    window.addEventListener("pointerup", () => {
+      if (this.pointerOnLog) markIntent(); // the scroll a scrollbar drag ends with
+      this.pointerOnLog = false;
+    });
     this.logEl.addEventListener("scroll", () => {
+      const userScroll = this.pointerOnLog || performance.now() - this.lastScrollIntentMs < USER_SCROLL_WINDOW_MS;
+      if (!userScroll) return;
       this.followEl.checked = isAtBottom(this.logEl.scrollTop, this.logEl.scrollHeight, this.logEl.clientHeight);
     });
     this.requireEl("#viewer-close").addEventListener("click", () => this.viewerEl.close());
