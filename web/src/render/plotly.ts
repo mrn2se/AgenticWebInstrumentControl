@@ -1,7 +1,7 @@
 import type { PlotlyHTMLElement, PlotRelayoutEvent } from "plotly.js-dist-min";
 import { registerRenderer } from "./registry";
 import { buildPlotlyLayout, relayoutTimeRange, tracesToPlotlyData } from "./plotly-mapping";
-import type { AnnotationLane, Layout, ThemeColors, TraceSet, WaveformRenderer } from "./types";
+import type { AnnotationLane, Layout, ThemeColors, TimeRange, TraceSet, TriggerMarker, WaveformRenderer } from "./types";
 
 /**
  * `plotly.js-dist-min` ships its own native TypeScript types (a genuine
@@ -120,6 +120,16 @@ export class PlotlyRenderer implements WaveformRenderer {
    * without checking which renderer is mounted.
    */
   setAnnotations(_lanes: readonly AnnotationLane[]): void {
+    // Intentionally empty.
+  }
+
+  /** Not drawn by this backend; same reasoning as `setAnnotations`. */
+  setTrigger(_marker: TriggerMarker | null): void {
+    // Intentionally empty.
+  }
+
+  /** Plotly's own zoom and pan stay as they are. */
+  setTimeLimits(_range: TimeRange | null): void {
     // Intentionally empty.
   }
 

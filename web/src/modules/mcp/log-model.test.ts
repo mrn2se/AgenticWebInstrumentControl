@@ -7,6 +7,7 @@ import {
   formatAgo,
   formatBytes,
   formatDuration,
+  isAtBottom,
   matchesFilter,
   plural,
 } from "./log-model";
@@ -118,5 +119,20 @@ describe("plural", () => {
     expect(plural(3, "error")).toBe("3 errors");
     expect(plural(1, "entry")).toBe("1 entry");
     expect(plural(0, "entry")).toBe("0 entries");
+  });
+});
+
+describe("isAtBottom", () => {
+  it("is true at the bottom and within a few pixels of it", () => {
+    expect(isAtBottom(600, 1000, 400)).toBe(true);
+    expect(isAtBottom(595, 1000, 400)).toBe(true);
+  });
+
+  it("is false once scrolled up to read", () => {
+    expect(isAtBottom(500, 1000, 400)).toBe(false);
+  });
+
+  it("is true when everything fits", () => {
+    expect(isAtBottom(0, 300, 400)).toBe(true);
   });
 });

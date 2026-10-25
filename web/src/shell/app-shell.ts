@@ -25,11 +25,14 @@ const STATUS_DOT_CLASS: Record<ConnectionState, string> = {
 // `text-awic-accent-fg`), Tailwind's compiled rule order decides, not the
 // order in the class attribute — which left the active tab's label
 // unreadable (muted text on the accent background).
-const TAB_BASE = "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors";
+const TAB_BASE = "flex-none whitespace-nowrap rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors md:px-3";
 const TAB_INACTIVE = "border-transparent text-awic-fg-muted hover:bg-awic-bg hover:text-awic-fg";
 const TAB_ACTIVE = "border-awic-accent bg-awic-accent text-awic-accent-fg";
 
-const THEME_BTN_BASE = "rounded-md border px-2 py-1 text-xs font-medium transition-colors";
+const REPO_URL = "https://github.com/mrn2se/AgenticWebInstrumentControl";
+const LINK = "text-awic-accent underline hover:opacity-80";
+
+const THEME_BTN_BASE = "rounded-md border px-1.5 py-1 text-xs font-medium transition-colors md:px-2";
 const THEME_BTN_INACTIVE = "border-awic-border bg-awic-bg-raised text-awic-fg-muted hover:bg-awic-bg";
 const THEME_BTN_ACTIVE = "border-awic-accent bg-awic-accent text-awic-accent-fg";
 
@@ -71,17 +74,40 @@ export class AppShell extends HTMLElement {
   private build(): void {
     this.className = "flex min-h-0 flex-1 flex-col";
     this.innerHTML = `
-      <header class="flex items-center gap-4 border-b border-awic-border bg-awic-bg-raised px-4 py-2">
-        <span class="font-semibold tracking-wide">AWIC</span>
-        <nav id="tabs" class="flex flex-1 gap-1 overflow-x-auto"></nav>
-        <span id="status" class="flex items-center gap-1.5 whitespace-nowrap text-sm text-awic-fg-muted">
+      <!-- On a narrow window the status and the theme switch give way first
+           (the dot alone, one-letter theme buttons), so every tab stays in
+           view instead of scrolling behind the bar. -->
+      <header class="flex items-center gap-2 border-b border-awic-border bg-awic-bg-raised px-3 py-2 md:gap-4 md:px-4">
+        <button id="about-open" type="button" class="flex-none rounded-md px-1 font-semibold tracking-wide hover:bg-awic-bg" title="About AWIC" aria-haspopup="dialog">AWIC</button>
+        <nav id="tabs" class="flex min-w-0 flex-1 gap-1 overflow-x-auto"></nav>
+        <span id="status" class="flex flex-none items-center gap-1.5 whitespace-nowrap text-sm text-awic-fg-muted">
           <span id="status-dot" class="h-2.5 w-2.5 rounded-full bg-awic-fg-muted"></span>
-          <span id="status-label"></span>
+          <span id="status-label" class="hidden md:inline"></span>
         </span>
-        <div id="theme-switch" class="flex gap-1"></div>
+        <div id="theme-switch" class="flex flex-none gap-1"></div>
       </header>
       <div id="errors" class="flex flex-col gap-1 px-4 py-2 empty:hidden"></div>
       <main id="content" class="flex min-h-0 flex-1 flex-col"></main>
+      <dialog id="about" aria-labelledby="about-title" class="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-awic-border bg-awic-bg-raised p-0 text-awic-fg backdrop:bg-black/50">
+        <div class="p-5">
+        <h2 id="about-title" class="m-0 mb-3 text-lg font-semibold">AWIC — Agentic Web Instrument Control</h2>
+        <p class="m-0 mb-3 text-sm">
+          A bench server for USB oscilloscopes and logic analyzers: capture, measure and decode in the
+          browser, and let an AI agent use the same instruments through MCP — or any VISA client through SCPI.
+        </p>
+        <p class="m-0 mb-3 text-sm">
+          Source code and documentation:
+          <a class="${LINK}" href="${REPO_URL}" target="_blank" rel="noopener noreferrer">${REPO_URL.replace("https://", "")}</a>
+        </p>
+        <p class="m-0 mb-4 text-sm">
+          Questions, ideas or problems? Please start a thread in the
+          <a class="${LINK}" href="${REPO_URL}/discussions" target="_blank" rel="noopener noreferrer">GitHub Discussions</a>.
+        </p>
+        <div class="flex justify-end">
+          <button id="about-close" type="button" class="${THEME_BTN_BASE} ${THEME_BTN_INACTIVE}">Close</button>
+        </div>
+        </div>
+      </dialog>
     `;
     this.tabsEl = this.requireEl("#tabs");
     this.contentEl = this.requireEl("#content");
@@ -90,6 +116,16 @@ export class AppShell extends HTMLElement {
     this.statusLabelEl = this.requireEl("#status-label");
     this.errorsEl = this.requireEl("#errors");
     this.themeSwitchEl = this.requireEl("#theme-switch");
+
+    // The About dialog: a native <dialog>, so Escape and focus handling come
+    // for free. Its content fills it edge to edge, so a click whose target is
+    // the dialog itself landed on the backdrop, and closes it.
+    const about = this.requireEl<HTMLDialogElement>("#about");
+    this.requireEl("#about-open").addEventListener("click", () => about.showModal());
+    this.requireEl("#about-close").addEventListener("click", () => about.close());
+    about.addEventListener("click", (e) => {
+      if (e.target === about) about.close();
+    });
   }
 
   /**
@@ -192,7 +228,18 @@ export class AppShell extends HTMLElement {
     for (const { choice, label } of options) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = label;
+      // The full word from `md` up, its first letter below; the title and
+      // the accessible name always carry the whole word.
+      const full = document.createElement("span");
+      full.className = "hidden md:inline";
+      full.textContent = label;
+      const short = document.createElement("span");
+      short.className = "md:hidden";
+      short.setAttribute("aria-hidden", "true");
+      short.textContent = label.charAt(0);
+      button.append(full, short);
+      button.title = `${label} theme`;
+      button.setAttribute("aria-label", `${label} theme`);
       const active = choice === ctx.theme.choice;
       button.className = `${THEME_BTN_BASE} ${active ? THEME_BTN_ACTIVE : THEME_BTN_INACTIVE}`;
       button.setAttribute("aria-pressed", String(active));
@@ -206,6 +253,7 @@ export class AppShell extends HTMLElement {
 
   private renderStatus(connection: ConnectionState): void {
     this.statusLabelEl.textContent = STATUS_LABEL[connection];
+    this.statusEl.title = STATUS_LABEL[connection];
     this.statusEl.dataset.state = connection;
     this.statusDotEl.className = `h-2.5 w-2.5 rounded-full ${STATUS_DOT_CLASS[connection]}`;
   }

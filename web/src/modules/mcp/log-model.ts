@@ -121,3 +121,15 @@ export function plural(n: number, word: string): string {
   if (n === 1) return `${n} ${word}`;
   return word.endsWith("y") ? `${n} ${word.slice(0, -1)}ies` : `${n} ${word}s`;
 }
+
+/** How far from the bottom, in CSS pixels, still counts as "at the bottom" — sub-pixel rounding and a stray wheel tick should not drop Follow. */
+const BOTTOM_SLACK_PX = 8;
+
+/**
+ * Whether a scrolled log is showing its newest entry. The log's Follow box
+ * tracks this, the way a terminal does: scrolling up to read unticks it,
+ * scrolling back down ticks it again.
+ */
+export function isAtBottom(scrollTop: number, scrollHeight: number, clientHeight: number): boolean {
+  return scrollHeight - scrollTop - clientHeight <= BOTTOM_SLACK_PX;
+}

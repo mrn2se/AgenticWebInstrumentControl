@@ -1,6 +1,6 @@
 import { registerRenderer } from "./registry";
 import { panelIndex } from "./plotly-mapping";
-import type { AnnotationLane, Layout, ThemeColors, Trace, TraceSet, WaveformRenderer } from "./types";
+import type { AnnotationLane, Layout, ThemeColors, TimeRange, Trace, TraceSet, TriggerMarker, WaveformRenderer } from "./types";
 import { RendererUnavailableError } from "./types";
 import { layoutAnnotations, levelRowBand } from "./annotation-layout";
 import { channelColor, type RgbaFloat } from "./channel-colors";
@@ -13,11 +13,14 @@ import {
 } from "./webgl2-geometry";
 import { formatSiTime, formatVolts, timeTicks, voltTicks } from "./webgl2-axis";
 import {
+  clampViewport,
   fitAllViewport,
   panViewport,
   pointerXToTime,
   timeToPointerX,
   traceSetTimeBounds,
+  wheelAction,
+  wheelDeltaPixels,
   zoomViewport,
   type Viewport,
 } from "./webgl2-viewport";
@@ -161,6 +164,9 @@ class Webgl2Renderer implements WaveformRenderer {
 
   private viewport: Viewport | null = null;
   private theme: ThemeColors | null = null;
+  private trigger: TriggerMarker | null = null;
+  /** See `setTimeLimits`; `null` falls back to the traces' own extent. */
+  private timeLimits: TimeRange | null = null;
 
   private resizeObserver: ResizeObserver | null = null;
   private rafHandle: number | null = null;
@@ -169,15 +175,24 @@ class Webgl2Renderer implements WaveformRenderer {
 
   private readonly handleWheel = (e: WheelEvent): void => {
     if (!this.viewport || !this.glCanvas) return;
-    e.preventDefault();
     const rect = this.glCanvas.getBoundingClientRect();
-    const pivot = pointerXToTime(e.clientX - rect.left, rect.width, this.viewport);
-    // deltaY > 0 (scroll down / pinch out) zooms out; a smooth exponential
-    // response feels closer to a real scope's knob than a fixed step.
-    const factor = Math.exp(e.deltaY * 0.001);
-    this.viewport = zoomViewport(this.viewport, pivot, factor);
-    this.notifyViewportChange();
-    this.scheduleDraw();
+    const action = wheelAction({
+      dx: wheelDeltaPixels(e.deltaX, e.deltaMode, rect.width),
+      dy: wheelDeltaPixels(e.deltaY, e.deltaMode, rect.height),
+      shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey,
+    });
+    if (action.kind === "none") return;
+    e.preventDefault();
+    let next: Viewport;
+    if (action.kind === "zoom") {
+      const pivot = pointerXToTime(e.clientX - rect.left, rect.width, this.viewport);
+      next = zoomViewport(this.viewport, pivot, action.factor);
+    } else {
+      const span = this.viewport.t1 - this.viewport.t0;
+      next = panViewport(this.viewport, (action.px / Math.max(rect.width, 1)) * span);
+    }
+    this.applyUserViewport(next);
   };
 
   private readonly handlePointerDown = (e: PointerEvent): void => {
@@ -192,9 +207,7 @@ class Webgl2Renderer implements WaveformRenderer {
     const rect = this.glCanvas.getBoundingClientRect();
     const span = drag.startViewport.t1 - drag.startViewport.t0;
     const deltaSeconds = -((e.clientX - drag.startXCss) / Math.max(rect.width, 1)) * span;
-    this.viewport = panViewport(drag.startViewport, deltaSeconds);
-    this.notifyViewportChange();
-    this.scheduleDraw();
+    this.applyUserViewport(panViewport(drag.startViewport, deltaSeconds));
   };
 
   private readonly handlePointerUp = (e: PointerEvent): void => {
@@ -208,6 +221,19 @@ class Webgl2Renderer implements WaveformRenderer {
     this.notifyViewportChange();
     this.scheduleDraw();
   };
+
+  /**
+   * A zoom or pan the user made, held inside the data: zooming out stops at
+   * the fit-all view and a pan cannot push the data off screen, where only a
+   * double-click used to bring it back.
+   */
+  private applyUserViewport(next: Viewport): void {
+    const clamped = clampViewport(next, this.timeLimits ?? traceSetTimeBounds(this.traces.traces));
+    if (this.viewport && clamped.t0 === this.viewport.t0 && clamped.t1 === this.viewport.t1) return;
+    this.viewport = clamped;
+    this.notifyViewportChange();
+    this.scheduleDraw();
+  }
 
   private readonly handleContextLost = (e: Event): void => {
     e.preventDefault();
@@ -320,6 +346,15 @@ class Webgl2Renderer implements WaveformRenderer {
     this.scheduleDraw();
   }
 
+  setTrigger(marker: TriggerMarker | null): void {
+    this.trigger = marker;
+    this.scheduleDraw();
+  }
+
+  setTimeLimits(range: TimeRange | null): void {
+    this.timeLimits = range && range.t1 > range.t0 ? range : null;
+  }
+
   onViewportChange(cb: (t0: number, t1: number) => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
@@ -351,6 +386,8 @@ class Webgl2Renderer implements WaveformRenderer {
     this.pending = [];
     this.viewport = null;
     this.theme = null;
+    this.trigger = null;
+    this.timeLimits = null;
     this.dragState = null;
     this.listeners.clear();
   }
@@ -612,7 +649,6 @@ class Webgl2Renderer implements WaveformRenderer {
     const stepSeconds = ticks.length > 1 ? ticks[1]! - ticks[0]! : this.viewport.t1 - this.viewport.t0;
 
     ctx.strokeStyle = gridColor;
-    ctx.fillStyle = textColor;
     ctx.lineWidth = 1;
     for (const t of ticks) {
       const x = timeToPointerX(t, cssW, this.viewport);
@@ -620,7 +656,6 @@ class Webgl2Renderer implements WaveformRenderer {
       ctx.moveTo(x + 0.5, 0);
       ctx.lineTo(x + 0.5, cssH);
       ctx.stroke();
-      ctx.fillText(formatSiTime(t, stepSeconds), Math.min(Math.max(x + 3, 2), Math.max(cssW - 44, 2)), cssH - 4);
     }
 
     const panelCount = Math.max(this.layout.panels.length, 1);
@@ -635,24 +670,122 @@ class Webgl2Renderer implements WaveformRenderer {
       ctx.lineTo(cssW, bottomCss + 0.5);
       ctx.stroke();
 
-      ctx.fillStyle = textColor;
-      ctx.fillText(panel.label, 4, topCss + 12);
-
       if (panel.kind === "analog") {
         const { min: vMin, max: vMax } = analogPanelBounds(panel.rangeV, panel.offsetV);
-        const vTicks = voltTicks(vMin, vMax, 3);
+        // About one division per 28 px of lane: a 2 V square wave on a ±5 V
+        // lane must be readable off the plot, and a lone "0 V" tick was not.
+        const vTicks = voltTicks(vMin, vMax, Math.max(2, Math.floor((bottomCss - topCss) / 28)));
         const vStep = vTicks.length > 1 ? vTicks[1]! - vTicks[0]! : panel.rangeV;
         const valueT = valueAxisTransform(row.top, row.bottom, analogPanelSpan(panel.rangeV), panel.offsetV);
+        const labels: Array<{ text: string; y: number }> = [];
+        ctx.save();
+        ctx.setLineDash([2, 3]);
+        ctx.globalAlpha = 0.6;
         for (const v of vTicks) {
           const clipY = v * valueT.scale + valueT.offset;
           const yCss = ((1 - clipY) / 2) * cssH;
-          if (yCss < topCss + 10 || yCss > bottomCss - 2) continue; // keep volt labels off the channel-name/grid lines
-          ctx.fillText(formatVolts(v, vStep), 4, yCss - 2);
+          if (yCss < topCss + 1 || yCss > bottomCss - 1) continue;
+          ctx.beginPath();
+          ctx.moveTo(0, Math.round(yCss) + 0.5);
+          ctx.lineTo(cssW, Math.round(yCss) + 0.5);
+          ctx.stroke();
+          // Keep volt labels off the channel name and the lane's bottom line.
+          if (yCss >= topCss + 22 && yCss <= bottomCss - 4) labels.push({ text: formatVolts(v, vStep), y: yCss + 4 });
         }
+        ctx.restore();
+        for (const label of labels) this.drawLabel(ctx, label.text, 4, label.y, textColor);
+        this.drawLabel(ctx, `${panel.label} · ${formatVolts(vStep, vStep)}/div`, 4, topCss + 13, textColor);
+        this.drawTriggerLevel(ctx, panel.channel, valueT, topCss, bottomCss, cssW, cssH);
       } else {
         this.drawAnnotationLane(ctx, panel.channel, topCss, bottomCss, cssW);
+        this.drawLabel(ctx, panel.label, 4, topCss + 13, textColor);
       }
     });
+
+    // Time labels last, so a trace or an annotation never covers them.
+    for (const t of ticks) {
+      const x = timeToPointerX(t, cssW, this.viewport);
+      this.drawLabel(ctx, formatSiTime(t, stepSeconds), Math.min(Math.max(x + 3, 2), Math.max(cssW - 50, 2)), cssH - 4, textColor);
+    }
+    this.drawTriggerTime(ctx, cssW, cssH);
+  }
+
+  /**
+   * Text on a backdrop of the plot's own background, so a trace running
+   * through a lane label or a tick label never makes it unreadable (the
+   * traces start at the left edge, right where the labels are).
+   */
+  private drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, baseline: number, color: string): void {
+    const width = ctx.measureText(text).width;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = this.theme?.background ?? "#ffffff";
+    ctx.fillRect(x - 2, baseline - 10, width + 4, 13);
+    ctx.restore();
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, baseline);
+  }
+
+  /** The trigger's level as a dashed line across its own analog lane, labelled at the right edge. */
+  private drawTriggerLevel(
+    ctx: CanvasRenderingContext2D,
+    channel: number,
+    valueT: { readonly scale: number; readonly offset: number },
+    topCss: number,
+    bottomCss: number,
+    cssW: number,
+    cssH: number,
+  ): void {
+    const trigger = this.trigger;
+    if (!trigger || trigger.channel !== channel || trigger.levelV === null) return;
+    const clipY = trigger.levelV * valueT.scale + valueT.offset;
+    const yCss = ((1 - clipY) / 2) * cssH;
+    if (yCss < topCss || yCss > bottomCss) return;
+    const color = this.triggerColor(channel);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, Math.round(yCss) + 0.5);
+    ctx.lineTo(cssW, Math.round(yCss) + 0.5);
+    ctx.stroke();
+    ctx.restore();
+    const text = `T ${formatVolts(trigger.levelV, 0.01)}`;
+    this.drawLabel(ctx, text, Math.max(cssW - ctx.measureText(text).width - 6, 2), yCss - 3, color);
+  }
+
+  /** A "T" flag at the top of the plot where the trigger fired, with a faint line down through every lane. */
+  private drawTriggerTime(ctx: CanvasRenderingContext2D, cssW: number, cssH: number): void {
+    const trigger = this.trigger;
+    if (!trigger || !this.viewport) return;
+    const x = timeToPointerX(trigger.t, cssW, this.viewport);
+    if (x < 0 || x > cssW) return;
+    const color = this.triggerColor(trigger.channel);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(Math.round(x) + 0.5, 0);
+    ctx.lineTo(Math.round(x) + 0.5, cssH);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, 0);
+    ctx.lineTo(x + 6, 0);
+    ctx.lineTo(x, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.save();
+    ctx.font = "bold 11px system-ui, sans-serif";
+    this.drawLabel(ctx, "T", x + 6, 11, color);
+    ctx.restore();
+  }
+
+  private triggerColor(channel: number): string {
+    const [r, g, b] = channelColor(channel, this.theme?.background ?? "#ffffff");
+    return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
   }
 
   /**

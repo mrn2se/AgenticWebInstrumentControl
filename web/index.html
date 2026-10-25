@@ -25,7 +25,10 @@
     </script>
   </head>
   <body class="h-full m-0 font-sans bg-awic-bg text-awic-fg">
-    <div id="app" class="flex min-h-screen flex-col"></div>
+    <!-- Exactly the viewport's height, never just at least it: a module's
+         content must scroll inside its own pane, not push the header and
+         the tab bar off the page. -->
+    <div id="app" class="flex h-dvh flex-col overflow-hidden"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

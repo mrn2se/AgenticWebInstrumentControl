@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   ANALOG_MEASUREMENT_KINDS,
   DIGITAL_MEASUREMENT_KINDS,
+  addMeasurementStatus,
+  captureHeader,
+  formatMeasurementValue,
+  measurementBlocks,
   measurementRows,
   requestMeasurement,
+  type MeasurementStatus,
   type MeasurementRequest,
   type SendCaptureMeasure,
 } from "./measurements";
@@ -99,7 +104,7 @@ describe("measurementRows (panel rendering: values vs. unavailability, never a b
       request,
       entries: [{ kind: "frequency", outcome: { status: "ok", value: 1000.2, unit: "Hz" } }],
     });
-    expect(rows).toEqual([{ label: "D0", kind: "frequency", text: "1000.20 Hz" }]);
+    expect(rows).toEqual([{ label: "D0", kind: "frequency", text: "1.000 kHz" }]);
   });
 
   it("renders an integer value without spurious decimals", () => {
@@ -108,7 +113,7 @@ describe("measurementRows (panel rendering: values vs. unavailability, never a b
       request,
       entries: [{ kind: "edge_count", outcome: { status: "ok", value: 39, unit: "count" } }],
     });
-    expect(rows).toEqual([{ label: "D0", kind: "edge_count", text: "39 count" }]);
+    expect(rows).toEqual([{ label: "D0", kind: "edge_count", text: "39" }]);
   });
 
   it("renders unavailability as an explanatory reason, never a blank or a number", () => {
@@ -133,5 +138,59 @@ describe("measurementRows (panel rendering: values vs. unavailability, never a b
       { label: "D0", kind: "frequency", text: "error: socket closed" },
       { label: "D0", kind: "vpp", text: "error: socket closed" },
     ]);
+  });
+});
+
+describe("formatMeasurementValue (SI prefixes, no false precision)", () => {
+  it("formats times with SI prefixes", () => {
+    expect(formatMeasurementValue("period", 0.001, "s")).toBe("1.000 ms");
+    expect(formatMeasurementValue("rise_time", 8.18705e-7, "s")).toBe("819 ns");
+    expect(formatMeasurementValue("fall_time", 1.64226e-7, "s")).toBe("164 ns");
+  });
+
+  it("rounds volts to the channel's resolution", () => {
+    const step = 10 / 255; // 8-bit converter on a ±5 V range
+    expect(formatMeasurementValue("vpp", 2.0, "V", step)).toBe("2.00 V");
+    expect(formatMeasurementValue("vmin", 0.254902, "V", step)).toBe("0.25 V");
+  });
+
+  it("falls back to 3 significant digits for volts without a resolution", () => {
+    expect(formatMeasurementValue("vmin", 0.254902, "V")).toBe("255 mV");
+  });
+
+  it("formats percentages to a tenth", () => {
+    expect(formatMeasurementValue("duty", 49.98765, "%")).toBe("50.0 %");
+  });
+});
+
+describe("measurement blocks per capture", () => {
+  const ok = (capture: string, channel: number): MeasurementStatus => ({
+    status: "ok",
+    request: { capture, channel, label: `CH${channel + 1}`, kinds: ["vpp"] },
+    entries: [],
+  });
+
+  it("groups by capture, newest first", () => {
+    let statuses: MeasurementStatus[] = [];
+    statuses = addMeasurementStatus(statuses, ok("capture://a", 0));
+    statuses = addMeasurementStatus(statuses, ok("capture://b", 0));
+    statuses = addMeasurementStatus(statuses, ok("capture://b", 1));
+    const blocks = measurementBlocks(statuses);
+    expect(blocks.map((b) => b.capture)).toEqual(["capture://b", "capture://a"]);
+    expect(blocks[0]!.statuses.map((s) => s.request.channel)).toEqual([1, 0]);
+  });
+
+  it("replaces an earlier measurement of the same channel of the same capture", () => {
+    let statuses: MeasurementStatus[] = [];
+    statuses = addMeasurementStatus(statuses, ok("capture://a", 0));
+    statuses = addMeasurementStatus(statuses, ok("capture://a", 0));
+    expect(statuses).toHaveLength(1);
+  });
+
+  it("heads a block with time, rate and sample count", () => {
+    const takenAtMs = new Date(2026, 0, 1, 14, 3, 22).getTime();
+    expect(captureHeader({ capture: "capture://a", takenAtMs, rateHz: 1e6, samples: 10000, source: "single" })).toBe(
+      "Capture 14:03:22 · 1 MS/s · 10\u202f000 samples",
+    );
   });
 });

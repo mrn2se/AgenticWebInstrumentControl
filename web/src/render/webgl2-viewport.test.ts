@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  clampViewport,
   fitAllViewport,
   panViewport,
   pointerXToTime,
   timeToPointerX,
   traceSetTimeBounds,
+  wheelAction,
+  wheelDeltaPixels,
   zoomViewport,
 } from "./webgl2-viewport";
 import type { Trace } from "./types";
@@ -121,5 +124,74 @@ describe("fitAllViewport", () => {
     const v = fitAllViewport({ t0: 5, t1: 5 });
     expect(v.t0).toBeCloseTo(4, 10);
     expect(v.t1).toBeCloseTo(6, 10);
+  });
+});
+
+describe("clampViewport", () => {
+  const extent = { t0: 0, t1: 100 };
+
+  it("leaves a viewport inside the data alone", () => {
+    expect(clampViewport({ t0: 10, t1: 20 }, extent)).toEqual({ t0: 10, t1: 20 });
+  });
+
+  it("caps zoom-out at the fit-all span", () => {
+    const v = clampViewport({ t0: -50, t1: 150 }, extent);
+    expect(v.t0).toBeCloseTo(-2, 10);
+    expect(v.t1).toBeCloseTo(102, 10);
+  });
+
+  it("slides a pan past either edge back inside, keeping the span", () => {
+    const left = clampViewport({ t0: -40, t1: -30 }, extent);
+    expect(left.t0).toBeCloseTo(-2, 10);
+    expect(left.t1 - left.t0).toBeCloseTo(10, 10);
+    const right = clampViewport({ t0: 500, t1: 510 }, extent);
+    expect(right.t1).toBeCloseTo(102, 10);
+    expect(right.t1 - right.t0).toBeCloseTo(10, 10);
+  });
+
+  it("does nothing without an extent", () => {
+    expect(clampViewport({ t0: -40, t1: -30 }, null)).toEqual({ t0: -40, t1: -30 });
+  });
+});
+
+describe("wheelDeltaPixels", () => {
+  it("passes pixel deltas through", () => {
+    expect(wheelDeltaPixels(53, 0, 800)).toBe(53);
+  });
+
+  it("scales line deltas to pixels", () => {
+    expect(wheelDeltaPixels(3, 1, 800)).toBe(48);
+  });
+
+  it("scales page deltas by the page size", () => {
+    expect(wheelDeltaPixels(1, 2, 800)).toBe(800);
+  });
+});
+
+describe("wheelAction", () => {
+  const base = { dx: 0, dy: 0, shiftKey: false, ctrlKey: false };
+
+  it("zooms out on a plain wheel down and in on a wheel up", () => {
+    const out = wheelAction({ ...base, dy: 100 });
+    const inward = wheelAction({ ...base, dy: -100 });
+    expect(out.kind === "zoom" && out.factor > 1).toBe(true);
+    expect(inward.kind === "zoom" && inward.factor < 1).toBe(true);
+  });
+
+  it("pans on a horizontal swipe", () => {
+    expect(wheelAction({ ...base, dx: 40, dy: 3 })).toEqual({ kind: "pan", px: 40 });
+  });
+
+  it("pans on Shift+wheel, whichever axis the browser reports it on", () => {
+    expect(wheelAction({ ...base, dy: 48, shiftKey: true })).toEqual({ kind: "pan", px: 48 });
+    expect(wheelAction({ ...base, dx: 48, shiftKey: true })).toEqual({ kind: "pan", px: 48 });
+  });
+
+  it("zooms on a pinch (Ctrl) even with a horizontal component", () => {
+    expect(wheelAction({ ...base, dx: 40, dy: 5, ctrlKey: true }).kind).toBe("zoom");
+  });
+
+  it("does nothing for an empty event", () => {
+    expect(wheelAction(base)).toEqual({ kind: "none" });
   });
 });

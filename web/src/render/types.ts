@@ -109,6 +109,24 @@ export interface AnnotationLane {
   readonly boxes: readonly AnnotationBox[];
 }
 
+/**
+ * Where a triggered capture's trigger fired: drawn as a "T" on the time axis
+ * and, for an analog channel, a dashed line at the level it crossed.
+ */
+export interface TriggerMarker {
+  /** Seconds, on the same axis as the traces. */
+  readonly t: number;
+  readonly channel: number;
+  /** Volts; `null` for a digital channel, which has no level to draw. */
+  readonly levelV: number | null;
+}
+
+/** A time range in seconds, `t0 < t1`. */
+export interface TimeRange {
+  readonly t0: number;
+  readonly t1: number;
+}
+
 export type RendererId = "plotly" | "webgl2" | "uplot";
 
 /**
@@ -154,6 +172,18 @@ export interface WaveformRenderer {
    */
   setAnnotations(lanes: readonly AnnotationLane[]): void;
   setViewport(t0: number, t1: number): void;
+  /**
+   * The trigger of the capture on screen, or `null` for none. Like
+   * `setAnnotations`, a backend that cannot draw it keeps it as a no-op.
+   */
+  setTrigger(marker: TriggerMarker | null): void;
+  /**
+   * How far the user may zoom out and pan: the whole of the data that can be
+   * shown, which in Live mode is the recording's retained span rather than
+   * the window currently loaded. `null` uses the traces' own extent. Only
+   * user interaction is held to it; `setViewport()` is not.
+   */
+  setTimeLimits(range: TimeRange | null): void;
   /**
    * Subscribes to viewport changes driven by user interaction with the
    * mounted plot (wheel-zoom, drag-pan, double-click-fit) — never fired for

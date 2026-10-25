@@ -1,5 +1,5 @@
 import { registerRenderer } from "./registry";
-import type { AnnotationLane, Layout, ThemeColors, TraceSet, WaveformRenderer } from "./types";
+import type { AnnotationLane, Layout, ThemeColors, TimeRange, TraceSet, TriggerMarker, WaveformRenderer } from "./types";
 import { RendererNotImplementedError } from "./types";
 
 /**
@@ -30,6 +30,14 @@ class UplotRenderer implements WaveformRenderer {
 
   setViewport(_t0: number, _t1: number): void {
     throw new RendererNotImplementedError(this.id);
+  }
+
+  setTrigger(_marker: TriggerMarker | null): void {
+    // Nothing is ever mounted; nothing to draw onto.
+  }
+
+  setTimeLimits(_range: TimeRange | null): void {
+    // Nothing is ever mounted; there is no zoom to limit.
   }
 
   /** Nothing is ever mounted, so nothing ever fires; still returns a working unsubscribe function. */

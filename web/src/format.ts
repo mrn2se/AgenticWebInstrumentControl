@@ -70,3 +70,46 @@ export function formatSiFrequency(hz: number): string {
   const divisor = 10 ** unit.exponent;
   return `${(hz / divisor).toFixed(3)} ${unit.suffix}`;
 }
+
+/** SI prefixes for a value with any base unit, pico to giga. */
+const SI_PREFIXES: readonly SiUnit[] = [
+  { exponent: 9, suffix: "G" },
+  { exponent: 6, suffix: "M" },
+  { exponent: 3, suffix: "k" },
+  { exponent: 0, suffix: "" },
+  { exponent: -3, suffix: "m" },
+  { exponent: -6, suffix: "µ" },
+  { exponent: -9, suffix: "n" },
+  { exponent: -12, suffix: "p" },
+];
+
+/**
+ * `value` with an SI prefix on `unit` and `significant` digits, e.g.
+ * `formatSi(8.18705e-7, "s", 3)` is `"819 ns"` and `formatSi(0.001, "s", 4)`
+ * is `"1.000 ms"`. Rounding happens before the prefix is chosen, so 999.96 µs
+ * at 4 digits reads `"1.000 ms"`, not `"1000 µs"`.
+ */
+export function formatSi(value: number, unit: string, significant = 4): string {
+  if (!Number.isFinite(value)) return `${value} ${unit}`.trim();
+  if (value === 0) return `${(0).toFixed(Math.max(0, significant - 1))} ${unit}`.trim();
+  const rounded = Number(value.toPrecision(significant));
+  const magnitude = Math.abs(rounded);
+  const prefix =
+    SI_PREFIXES.find((p) => magnitude >= 10 ** p.exponent) ?? SI_PREFIXES[SI_PREFIXES.length - 1]!;
+  const scaled = rounded / 10 ** prefix.exponent;
+  const integerDigits = Math.max(1, Math.floor(Math.log10(Math.abs(scaled))) + 1);
+  const decimals = Math.max(0, significant - integerDigits);
+  return `${scaled.toFixed(decimals)} ${prefix.suffix}${unit}`;
+}
+
+/**
+ * A sample rate as a scope labels it, `"16 MS/s"` or `"62.5 kS/s"`: samples
+ * per second are not a frequency, and `"16.000 MHz"` read like one. Trailing
+ * zeros are dropped — a rate ladder lists round numbers.
+ */
+export function formatSampleRate(hz: number): string {
+  const unit = pickFrequencyUnit(Math.abs(hz));
+  const scaled = hz / 10 ** unit.exponent;
+  const text = String(Number(scaled.toFixed(3)));
+  return `${text} ${unit.suffix.replace("Hz", "S/s")}`;
+}
