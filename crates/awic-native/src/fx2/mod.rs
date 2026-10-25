@@ -23,7 +23,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use nusb::transfer::{ControlOut, ControlType, Recipient};
 use nusb::DeviceInfo;
-use tokio::time::Instant;
 
 use crate::error::{NativeError, Result};
 use crate::firmware::{Firmware, MAX_CHUNK_SIZE};
@@ -112,10 +111,27 @@ pub async fn upload<T: ControlTransport>(transport: &T, firmware: &Firmware) -> 
 /// there right now. `pub(crate)` so `fx2lafw::driver` can locate a device
 /// before it has been opened, e.g. right before firmware upload.
 pub(crate) async fn find_at_path(bus: u8, port_path: &[u8]) -> Result<Option<DeviceInfo>> {
-    let devices = nusb::list_devices().await?;
+    let devices = list_devices().await?;
     Ok(devices
         .into_iter()
         .find(|d| d.busnum() == bus && d.port_chain() == port_path))
+}
+
+/// `nusb::list_devices()`, run on the blocking pool.
+///
+/// On Linux it reads sysfs synchronously, and a read under a hub stalls for
+/// as long as the kernel holds that hub's lock — which it does for the whole
+/// ~90 s it spends retrying a sibling port whose device won't enumerate
+/// (`device descriptor read/64, error -110`). Observed on the bench: a
+/// misbehaving RP2040 on port 1 of the scope's hub froze the async worker
+/// polling for the scope's re-enumeration, so no timer — the 8 s
+/// re-enumeration timeout included — could fire until the kernel gave up.
+pub async fn list_devices() -> Result<Vec<DeviceInfo>> {
+    use nusb::MaybeFuture;
+    tokio::task::spawn_blocking(|| nusb::list_devices().wait().map(Iterator::collect))
+        .await
+        .expect("usb enumeration task panicked")
+        .map_err(NativeError::from)
 }
 
 /// Whether a freshly-polled sighting of the device is evidence that it has
@@ -177,10 +193,23 @@ pub async fn wait_for_reenumeration(
     port_path: &[u8],
     timeout: Duration,
 ) -> Result<DeviceInfo> {
+    // The deadline covers each poll too: one that stalls in the kernel (see
+    // [`list_devices`]) runs out the clock rather than outliving it.
+    tokio::time::timeout(timeout, poll_for_reenumeration(bus, port_path))
+        .await
+        .unwrap_or_else(|_| {
+            Err(NativeError::ReenumerationTimeout {
+                bus,
+                port_path: port_path.to_vec(),
+                timeout_ms: timeout.as_millis() as u64,
+            })
+        })
+}
+
+async fn poll_for_reenumeration(bus: u8, port_path: &[u8]) -> Result<DeviceInfo> {
     let baseline_addr = find_at_path(bus, port_path)
         .await?
         .map(|d| d.device_address());
-    let deadline = Instant::now() + timeout;
     let mut seen_absent = false;
 
     loop {
@@ -200,14 +229,6 @@ pub async fn wait_for_reenumeration(
                     return Ok(info);
                 }
             }
-        }
-
-        if Instant::now() >= deadline {
-            return Err(NativeError::ReenumerationTimeout {
-                bus,
-                port_path: port_path.to_vec(),
-                timeout_ms: timeout.as_millis() as u64,
-            });
         }
         tokio::time::sleep(REENUMERATION_POLL_INTERVAL).await;
     }

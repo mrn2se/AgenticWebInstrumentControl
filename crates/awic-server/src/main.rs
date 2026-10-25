@@ -66,7 +66,6 @@ async fn main() -> anyhow::Result<()> {
     late_state
         .set(state.clone())
         .unwrap_or_else(|_| unreachable!("late_state is set exactly once, right here"));
-    state.bootstrap().await;
 
     // SCPI-over-TCP (SPECIFICATION.md §9), same host as the WebSocket/HTTP
     // server, its own port. Shuts down alongside everything else via
@@ -77,10 +76,19 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!(%err, "scpi listener failed");
         }
     });
-    let _watcher = spawn_topology_watcher(watcher_mode, state.event_bus().clone());
-    // Instruments follow the bus: opened when they appear, dropped when they
-    // vanish — including across a port power cycle.
-    let _hotplug = tokio::spawn(awic_server::state::run_instrument_hotplug(state.clone()));
+    // Opening the instruments can take a while — firmware uploads, and a
+    // re-enumeration a sick device elsewhere on the same hub can hold up for
+    // a minute and more — so it runs alongside the listeners instead of
+    // ahead of them; until it finishes, the UI just shows fewer devices.
+    // Hot-plug starts only after it, as it always has.
+    let bootstrap_state = state.clone();
+    let _instruments = tokio::spawn(async move {
+        bootstrap_state.bootstrap().await;
+        let _watcher = spawn_topology_watcher(watcher_mode, bootstrap_state.event_bus().clone());
+        // Instruments follow the bus: opened when they appear, dropped when
+        // they vanish — including across a port power cycle.
+        awic_server::state::run_instrument_hotplug(bootstrap_state).await;
+    });
     // The terminal module's serial source list changes with the bus too
     // (SPEC §11.2.1): a `usb.changed` event may mean a UART appeared or
     // disappeared, so republish `term.sources` on every one and let clients
