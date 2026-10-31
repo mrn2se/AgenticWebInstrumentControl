@@ -60,7 +60,10 @@ jobs:
       - run: cargo test --workspace --locked
 
   # The tests again on the ARM targets: aarch64 natively, armv7 (32-bit:
-  # usize is 32 bits) under qemu user-mode emulation.
+  # usize is 32 bits) under qemu user-mode emulation. Several tests stream a
+  # fake instrument in real time, which an unoptimized build under qemu cannot
+  # keep up with, and which parallel tests starve: armv7 runs optimized and one
+  # test at a time, keeping the overflow checks 32-bit code is tested for.
   test-arm:
     name: Rust test (${{ matrix.target }})
     strategy:
@@ -72,6 +75,7 @@ jobs:
           - target: armv7-unknown-linux-musleabihf
             runner: ubuntu-latest
             qemu: qemu-arm
+            test_args: --release -- --test-threads=1
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -88,9 +92,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Test
-        run: cargo test --workspace --locked --target ${{ matrix.target }}
+        run: cargo test --workspace --locked --target ${{ matrix.target }} ${{ matrix.test_args }}
         env:
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: ${{ matrix.qemu }}
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: true
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: true
 
   audit:
     name: Audit dependencies
