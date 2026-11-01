@@ -70,4 +70,4 @@ regex = "1"
 # `render_view` as PNG (live test F-09): rasterizes the SVG views for clients
 # that cannot display SVG. Pure Rust; text with the host's installed fonts
 # (none is embedded), no image decoders — these views never contain images.
-resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"] }
+resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts"] }
