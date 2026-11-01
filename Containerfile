@@ -5,7 +5,7 @@
 # generated file across. Building web first would fail on a fresh clone.
 
 # ---- Stage 1: Rust backend (also emits the TypeScript wire types) ----
-FROM rust:1.98-slim-trixie AS build
+FROM rust:1.99-slim-trixie AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 # .cargo/config.toml sets TS_RS_EXPORT_DIR; without it ts-rs writes the types
