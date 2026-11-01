@@ -198,7 +198,7 @@ readable answer instead of a client timeout.
 
 ## Distribution
 
-- A statically linked Linux x86_64 executable with the web UI compiled in, attached to each
+- Statically linked Linux executables (x86_64, aarch64, armv7) with the web UI compiled in, attached to each
   GitHub release with CycloneDX SBOMs and the third-party license notices
   ([DEVELOPMENT.md](DEVELOPMENT.md#6-releases)).
 - A container image for rootless podman ([CONTAINER.md](CONTAINER.md)).

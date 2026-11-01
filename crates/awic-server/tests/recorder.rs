@@ -665,7 +665,7 @@ async fn eviction_under_a_tiny_memory_budget() {
         1,
         json!({
             "op": "rec.start", "device": analog_device(),
-            "cfg": { "rate_hz": 1_000_000, "channels": [0, 1], "samples": 0, "continuous": true }
+            "cfg": { "rate_hz": 100_000, "channels": [0, 1], "samples": 0, "continuous": true }
         }),
     )
     .await;
@@ -673,7 +673,9 @@ async fn eviction_under_a_tiny_memory_budget() {
 
     // Eviction needs at least one closed 64 Ki-sample block, and how soon the
     // fake instrument delivers one depends on machine load: poll for the
-    // effect rather than sleeping a fixed time and hoping.
+    // effect rather than sleeping a fixed time and hoping. The low rate closes
+    // one in under a second and leaves the test's single-threaded runtime time
+    // to answer, even under qemu, where generating 1 MHz of noise cannot keep up.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut id = 2;
     let r = loop {

@@ -14,8 +14,14 @@ accepted = [
     "Unlicense",
     "MPL-2.0",
 ]
-# Only what is compiled into the release executable.
-targets = ["x86_64-unknown-linux-musl"]
+# Only what is compiled into the release executables: one notices file covers
+# every target CI releases (their crate sets differ slightly, e.g. `atomic`
+# on armv7, `cpufeatures` on x86_64).
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "armv7-unknown-linux-musleabihf",
+]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
 # AWIC's own crates are under its own license, not third-party.

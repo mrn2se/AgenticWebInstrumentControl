@@ -12,3 +12,13 @@ TS_RS_EXPORT_DIR = { value = "web/src/proto", relative = true }
 # under 2^53) — ts-rs's default `bigint` binding would require every caller
 # to special-case JSON parsing/stringifying for no benefit here.
 TS_RS_LARGE_INT = "number"
+
+# The ARM release targets (Raspberry Pi and similar boards) link with the
+# `rust-lld` that ships with the toolchain: every dependency is pure Rust and
+# the musl targets bring their own C runtime, so building them from an x86_64
+# host needs only `rustup target add`, no cross gcc.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"

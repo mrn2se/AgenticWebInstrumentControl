@@ -36,9 +36,17 @@ AWIC drives it as one. So AWIC identifies devices by USB bus path, never by VID:
 
 ## Install
 
-AWIC runs on **Linux x86_64**. Each [GitHub release](https://github.com/mrn2se/AgenticWebInstrumentControl/releases)
-carries `awic-linux-x86_64`: one statically linked executable with the web UI compiled in, so it
-needs no Rust, no Node and no container. To run AWIC in a container instead, see
+AWIC runs on **Linux** on x86_64 and ARM, Raspberry Pi included. Each [GitHub release](https://github.com/mrn2se/AgenticWebInstrumentControl/releases)
+carries one statically linked executable per architecture with the web UI compiled in, so it needs
+no Rust, no Node and no container:
+
+| File | For |
+|---|---|
+| `awic-linux-x86_64` | 64-bit PCs and servers |
+| `awic-linux-aarch64` | 64-bit ARM: Raspberry Pi 3/4/5 on a 64-bit OS, other ARM64 boards |
+| `awic-linux-armv7` | 32-bit ARM: Raspberry Pi 2/3/4 on a 32-bit OS |
+
+`uname -m` tells which one: `x86_64`, `aarch64`, or `armv7l`. To run AWIC in a container instead, see
 [docs/CONTAINER.md](docs/CONTAINER.md); to build it yourself, [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#7-building-and-running-from-source).
 
 **1. Packages.** The firmware AWIC loads into the instruments, and a font for the labels in PNG
@@ -62,7 +70,8 @@ sudo cp 99-awic.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules 
 sudo usermod -aG plugdev $USER   # then log out and back in, and replug the instruments
 ```
 
-**3. Download and run** the latest release. Or clone the repository and build it from source
+**3. Download and run** the latest release (shown for x86_64; use your architecture's file from the
+table above). Or clone the repository and build it from source
 ([docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#7-building-and-running-from-source)).
 
 ```sh
