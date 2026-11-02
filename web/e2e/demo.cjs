@@ -16,6 +16,35 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   const shot = async (name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }); };
+  // Lets the checks below read the plot's own pixels.
+  await page.addInitScript(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, options) {
+      return getContext.call(this, type, type === 'webgl2' ? { ...options, preserveDrawingBuffer: true } : options);
+    };
+  });
+  // Columns of the two scope lanes holding a second stroke: a clean trace is one contiguous run per column.
+  const strayColumns = () => page.evaluate(() => {
+    const canvas = [...document.querySelectorAll('awic-module-graph canvas')].find((c) => c.getContext('webgl2'));
+    const gl = canvas.getContext('webgl2');
+    const w = canvas.width, h = canvas.height, px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const lit = (x, y) => {
+      const i = (y * w + x) * 4;
+      return Math.abs(px[i] - px[0]) + Math.abs(px[i + 1] - px[1]) + Math.abs(px[i + 2] - px[2]) > 40;
+    };
+    let columns = 0;
+    for (const [y0, y1] of [[0, h >> 1], [h >> 1, h]]) {
+      for (let x = 0; x < w; x++) {
+        let runs = 0, inRun = false, gap = 99;
+        for (let y = y0 + 2; y < y1 - 2; y++) {
+          if (lit(x, y)) { if (!inRun) { if (gap > 3) runs++; inRun = true; } gap = 0; } else { inRun = false; gap++; }
+        }
+        if (runs > 1) columns++;
+      }
+    }
+    return columns;
+  });
 
   await page.goto(URL, { waitUntil: 'load' });
   await page.waitForSelector('dialog#welcome[open]');
@@ -82,6 +111,8 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   await graph.locator('#start').click();
   await page.waitForTimeout(1000);
   await shot('06-scope');
+  const stray = await strayColumns();
+  check(stray === 0, `the scope capture draws no stray strokes (${stray} columns)`);
   check(await graph.locator('#image').isDisabled(), 'the Image button is off where no server can draw it');
 
   // Live.

@@ -11,6 +11,7 @@ import {
   buildDigitalLevelVertices,
   buildDigitalToggleVertices,
 } from "./webgl2-geometry";
+import { splitAnalogTrace, splitEnvelopeTrace } from "./trace-runs";
 import { formatSiTime, formatVolts, timeTicks, voltTicks } from "./webgl2-axis";
 import {
   clampViewport,
@@ -454,34 +455,38 @@ class Webgl2Renderer implements WaveformRenderer {
 
       switch (trace.kind) {
         case "analog":
-          items.push({
-            data: buildAnalogLineVertices(trace, this.originSeconds),
-            primitive: GL_LINE_STRIP,
-            panel,
-            range,
-            offset,
-            color: channelColor(trace.channel, background),
-          });
+          for (const run of splitAnalogTrace(trace)) {
+            items.push({
+              data: buildAnalogLineVertices(run, this.originSeconds),
+              primitive: GL_LINE_STRIP,
+              panel,
+              range,
+              offset,
+              color: channelColor(trace.channel, background),
+            });
+          }
           break;
         case "analog-envelope": {
-          items.push({
-            data: buildAnalogEnvelopeVertices(trace, this.originSeconds),
-            primitive: GL_TRIANGLE_STRIP,
-            panel,
-            range,
-            offset,
-            color: channelColor(trace.channel, background, 0.35),
-          });
-          // The outline: a solid stroke around the band so it
-          // reads as one continuous shape even where the semi-transparent
-          // fill alone is fragile to sub-pixel-wide buckets.
-          const outline = buildAnalogEnvelopeOutlineVertices(trace, this.originSeconds);
           const strokeColor = channelColor(trace.channel, background, 0.9);
-          if (outline.top.length > 0) {
-            items.push({ data: outline.top, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
-          }
-          if (outline.bottom.length > 0) {
-            items.push({ data: outline.bottom, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
+          for (const run of splitEnvelopeTrace(trace)) {
+            items.push({
+              data: buildAnalogEnvelopeVertices(run, this.originSeconds),
+              primitive: GL_TRIANGLE_STRIP,
+              panel,
+              range,
+              offset,
+              color: channelColor(trace.channel, background, 0.35),
+            });
+            // The outline: a solid stroke around the band so it
+            // reads as one continuous shape even where the semi-transparent
+            // fill alone is fragile to sub-pixel-wide buckets.
+            const outline = buildAnalogEnvelopeOutlineVertices(run, this.originSeconds);
+            if (outline.top.length > 0) {
+              items.push({ data: outline.top, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
+            }
+            if (outline.bottom.length > 0) {
+              items.push({ data: outline.bottom, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
+            }
           }
           break;
         }
