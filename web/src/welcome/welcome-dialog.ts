@@ -72,6 +72,10 @@ export class WelcomeDialog {
         <p class="m-0 mt-4 border-t border-awic-border pt-3 text-xs text-awic-fg-muted">
           Documentation:
           ${DOCS.map(([label, href]) => `<a class="${LINK} mr-2" href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`).join(" ")}
+          <br />
+          <a class="${LINK} mr-2" href="./legal.html#legal-notice">Legal notice</a>
+          <a class="${LINK} mr-2" href="./legal.html#disclaimer">Disclaimer</a>
+          <a class="${LINK}" href="./legal.html#privacy">Privacy</a>
         </p>
       </div>
     `;
@@ -118,8 +122,8 @@ export class WelcomeDialog {
   private renderDemo(): void {
     this.bodyEl.innerHTML = `
       <p class="m-0 mb-3 max-w-[60ch] text-sm">
-        Use the real interface on a simulated bench. You do not need any hardware, and nothing is sent anywhere:
-        it all runs in this browser tab.
+        Use the real interface on a simulated bench. You do not need any hardware, and what you do here stays
+        in this browser tab.
       </p>
       <ul class="m-0 mb-5 max-w-[60ch] list-disc pl-5 text-sm">
         <li>Capture from a logic analyzer with UART, I2C and SPI traffic on its lines, and decode it.</li>

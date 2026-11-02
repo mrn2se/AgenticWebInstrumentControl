@@ -35,6 +35,7 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   await shot('02-install');
 
   const links = await page.locator('#welcome a[href*="#install"], #welcome a[href*="example-report"], #welcome a[href*="DEVELOPMENT"], #welcome a[href*="discussions"]').count();
+  check((await page.locator('#welcome a[href*="legal.html"]').count()) === 3, 'the dialog links the legal notice, disclaimer and privacy');
   check(links === 4, `the dialog links installation, development, example reports and discussions (${links})`);
   check((await page.locator('#welcome-tabs button').count()) === 2, 'the dialog offers the demo and the install assistant');
 
@@ -124,6 +125,16 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   const mcpText = await page.locator('awic-module-mcp').textContent();
   check(/survey_channels/.test(mcpText) && /Claude Code/.test(mcpText), 'MCP tab shows the agent session');
   await shot('10-mcp');
+
+  check((await page.locator('#demo-notice a[href*="legal.html"]').count()) === 1, 'the demo keeps a link to the legal page');
+  await page.locator('#demo-notice a[href*="legal.html"]').click();
+  await page.waitForSelector('#privacy');
+  check(/GitHub\s+Pages/.test(await page.textContent('main')), 'the legal page opens and names the host');
+  check(await page.evaluate(() => getComputedStyle(document.body).backgroundColor !== 'rgba(0, 0, 0, 0)'), 'the legal page is styled');
+  // CI adds these two files when it deploys; a local build does not have them.
+  for (const file of ['THIRD-PARTY-LICENSES.txt', 'awic-web.cdx.json']) {
+    check((await context.request.get(new globalThis.URL(file, page.url()).href)).status() === 200 || process.env.NO_NOTICES === '1', `the page's ${file} exists`);
+  }
 
   check(errors.length === 0, `no page errors ${JSON.stringify(errors.slice(0, 5))}`);
   await browser.close();

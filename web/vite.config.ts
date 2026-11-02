@@ -34,6 +34,8 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     outDir: mode === "pages" ? "dist-pages" : "dist",
+    // Only the public site has operator details; a user's own server has none to show.
+    ...(mode === "pages" ? { rollupOptions: { input: ["index.html", "legal.html"] } } : {}),
   },
   test: {
     environment: "node",

@@ -18,7 +18,7 @@
 #
 # A push to main publishes the web UI's hosted build to GitHub Pages: the
 # interactive demo and install assistant. Same gate as the
-# executables, and it carries the license notices of what it bundles.
+# executables, and it carries the license notices and SBOM of what it bundles.
 #
 # The audit job checks every Rust crate and npm package against the known
 # advisories (and npm's registry signatures); the executables are only
@@ -349,7 +349,7 @@ jobs:
         with:
           name: awic-notices
           path: notices
-      - run: cp notices/THIRD-PARTY-LICENSES.txt site/
+      - run: cp notices/THIRD-PARTY-LICENSES.txt notices/awic-web.cdx.json site/
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site

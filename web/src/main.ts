@@ -38,6 +38,15 @@ function mount(backend: Backend): void {
   ws.connect();
 }
 
+/** The public site's legal page, reachable from every state of it. */
+function legalLink(): HTMLAnchorElement {
+  const link = document.createElement("a");
+  link.href = "./legal.html";
+  link.className = "underline hover:opacity-80";
+  link.textContent = "Legal notice and privacy";
+  return link;
+}
+
 /** The GitHub Pages build (`vite build --mode pages`) has no server: it greets, and offers the simulated bench. */
 function startHosted(): void {
   let demoRunning = false;
@@ -50,7 +59,10 @@ function startHosted(): void {
   reopen.className = LINK_BUTTON;
   reopen.textContent = "Start the demo or install AWIC";
   reopen.addEventListener("click", () => void openWelcome("demo"));
-  empty.appendChild(reopen);
+  const legal = document.createElement("p");
+  legal.className = "m-0 mt-3";
+  legal.appendChild(legalLink());
+  empty.append(reopen, legal);
   root.appendChild(empty);
 
   const startDemo = async (): Promise<void> => {
@@ -66,7 +78,7 @@ function startHosted(): void {
     install.className = "underline hover:opacity-80";
     install.textContent = "Install AWIC";
     install.addEventListener("click", () => void openWelcome("install"));
-    notice.append("Simulated bench: every signal, port and log entry here is made up in your browser, and no hardware is touched. ", install, " to use your own instruments.");
+    notice.append("Simulated bench: every signal, port and log entry here is made up in your browser, and no hardware is touched. ", install, " to use your own instruments. ", legalLink());
     root.appendChild(notice);
     mount(demoBackend(demoSocketFactory()));
   };
