@@ -730,12 +730,13 @@ class Webgl2Renderer implements WaveformRenderer {
   /**
    * Text on a backdrop of the plot's own background, so a trace running
    * through a lane label or a tick label never makes it unreadable (the
-   * traces start at the left edge, right where the labels are).
+   * traces start at the left edge, right where the labels are). Light enough
+   * that the trace still shows through: it looked like a capture starting late.
    */
   private drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, baseline: number, color: string): void {
     const width = ctx.measureText(text).width;
     ctx.save();
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.5;
     ctx.fillStyle = this.theme?.background ?? "#ffffff";
     ctx.fillRect(x - 2, baseline - 10, width + 4, 13);
     ctx.restore();
