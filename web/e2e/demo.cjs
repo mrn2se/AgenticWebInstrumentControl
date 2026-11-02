@@ -113,7 +113,7 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   await shot('06-scope');
   const stray = await strayColumns();
   check(stray === 0, `the scope capture draws no stray strokes (${stray} columns)`);
-  check(await graph.locator('#image').isDisabled(), 'the Image button is off where no server can draw it');
+  check(await graph.locator('#analyze-btn').isDisabled(), 'the Analyze menu is off where no server can draw its views');
 
   // Leaving for Live and coming back keeps the capture's status.
   await graph.locator('#mode-live').click();

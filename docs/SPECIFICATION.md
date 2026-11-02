@@ -944,7 +944,7 @@ and carry a note that says so and gives the unit interval and bit rate, which do
 A capture drawn **server-side**, returned as an SVG document together with the numbers the
 drawing measured. `capture.render` on the wire, `render_view` over MCP, `GET /api/render` for the
 browser, and the same renderer behind all three — so the picture a person shares from the web
-UI's **Image** button and the picture an agent receives are the same picture, measured the same
+UI's **Analyze** menu and the picture an agent receives are the same picture, measured the same
 way.
 
 This does not replace the browser's WebGL traces (§5.3), which stay live and interactive. It
