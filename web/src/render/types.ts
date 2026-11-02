@@ -184,6 +184,8 @@ export interface WaveformRenderer {
    * user interaction is held to it; `setViewport()` is not.
    */
   setTimeLimits(range: TimeRange | null): void;
+  /** The rate of the data on the plot, which sets how far the user may zoom in. */
+  setSampleRate(rateHz: number): void;
   /**
    * Subscribes to viewport changes driven by user interaction with the
    * mounted plot (wheel-zoom, drag-pan, double-click-fit) — never fired for

@@ -42,6 +42,8 @@ class FakeRenderer implements WaveformRenderer {
   setTimeLimits(): void {
     // Not exercised by these registry tests.
   }
+
+  setSampleRate(_rateHz: number): void {}
   setViewport(t0: number, t1: number): void {
     this.lastViewport = { t0, t1 };
   }

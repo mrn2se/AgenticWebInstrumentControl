@@ -15,6 +15,7 @@ import { splitAnalogTrace, splitEnvelopeTrace } from "./trace-runs";
 import { formatSiTime, formatVolts, timeTicks, voltTicks } from "./webgl2-axis";
 import {
   clampViewport,
+  minViewSpanSeconds,
   fitAllViewport,
   panViewport,
   pointerXToTime,
@@ -168,6 +169,8 @@ class Webgl2Renderer implements WaveformRenderer {
   private viewport: Viewport | null = null;
   private theme: ThemeColors | null = null;
   private trigger: TriggerMarker | null = null;
+  /** See `setSampleRate`. */
+  private minTimeSpan = minViewSpanSeconds(0);
   /** See `setTimeLimits`; `null` falls back to the traces' own extent. */
   private timeLimits: TimeRange | null = null;
 
@@ -191,7 +194,7 @@ class Webgl2Renderer implements WaveformRenderer {
     let next: Viewport;
     if (action.kind === "zoom") {
       const pivot = pointerXToTime(e.clientX - rect.left, rect.width, this.viewport);
-      next = zoomViewport(this.viewport, pivot, action.factor);
+      next = zoomViewport(this.viewport, pivot, action.factor, this.minTimeSpan);
     } else {
       const span = this.viewport.t1 - this.viewport.t0;
       next = panViewport(this.viewport, (action.px / Math.max(rect.width, 1)) * span);
@@ -357,6 +360,10 @@ class Webgl2Renderer implements WaveformRenderer {
 
   setTimeLimits(range: TimeRange | null): void {
     this.timeLimits = range && range.t1 > range.t0 ? range : null;
+  }
+
+  setSampleRate(rateHz: number): void {
+    this.minTimeSpan = minViewSpanSeconds(rateHz);
   }
 
   onViewportChange(cb: (t0: number, t1: number) => void): () => void {

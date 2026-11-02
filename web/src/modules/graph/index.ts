@@ -1288,6 +1288,7 @@ class GraphModule extends AwicModule {
       if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
       this.captureTrigger = this.triggerMarkerForCapture();
       this.renderTriggerMarker();
+      this.renderTimeLimits();
       this.markPlotHasData();
       return;
     }
@@ -1338,6 +1339,7 @@ class GraphModule extends AwicModule {
   private renderTimeLimits(): void {
     const renderer = this.renderer;
     if (!renderer) return;
+    renderer.setSampleRate(this.mode === "live" ? this.liveRateHz : this.streamRateHz());
     const summary =
       this.mode === "live" && this.liveRecId !== null
         ? this.liveRecordings.find((r) => r.rec === this.liveRecId)
