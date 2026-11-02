@@ -13,6 +13,10 @@ search, rendered views, MCP, SCPI and the terminal all work on hardware; a PSU m
 planned. Details in [docs/FEATURES.md](docs/FEATURES.md).
 License: [MPL-2.0](LICENSE) — no GPL dependency.
 
+**[Try the interactive demo](https://mrn2se.github.io/AgenticWebInstrumentControl/)**: the real web
+UI on a simulated bench, in your browser, with no hardware. The same page gives you the install
+commands for your setup.
+
 ## Hardware
 
 AWIC drives typical low-cost USB instruments that [sigrok](https://sigrok.org) also supports, with
@@ -67,7 +71,7 @@ adjust `99-awic.rules` to the devices and hubs AWIC should reach:
 ```sh
 curl -LO https://raw.githubusercontent.com/mrn2se/AgenticWebInstrumentControl/main/tools/udev/99-awic.rules
 sudo cp 99-awic.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
-sudo usermod -aG plugdev $USER   # then log out and back in, and replug the instruments
+sudo usermod -aG plugdev,dialout $USER   # then log out and back in, and replug the instruments
 ```
 
 **3. Download and run** the latest release (shown for x86_64; use your architecture's file from the
@@ -83,6 +87,24 @@ chmod +x awic-linux-x86_64
 
 Open <http://127.0.0.1:8080/>. SCPI listens on port 5025. `--help` lists the options. Your USB port
 locks are kept across restarts in `~/.local/state/awic` (or `$XDG_STATE_HOME/awic`). Distribute `THIRD-PARTY-LICENSES.txt` from the release along with the executable.
+
+### Run it as a service
+
+The [demo page's install assistant](https://mrn2se.github.io/AgenticWebInstrumentControl/) writes the
+commands for your choice of new install or update, by hand or as a systemd service, with or without
+the packages above and attestation checking. The service runs as its own unprivileged user in the
+`plugdev` and `dialout` groups, from `/usr/local/bin/awic`, with its state in `/var/lib/awic`.
+
+### Verify a download
+
+Releases after v0.2.3 carry a GitHub build attestation, proving this repository's CI built the file:
+
+```sh
+gh attestation verify awic-linux-x86_64 --repo mrn2se/AgenticWebInstrumentControl
+```
+
+They also carry an attestation tying each executable to its SBOM. Add
+`--predicate-type https://cyclonedx.org/bom` to check that one.
 
 ## Configuration
 

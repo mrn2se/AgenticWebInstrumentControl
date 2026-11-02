@@ -7,6 +7,8 @@ import { Store } from "./store/store";
 import { createInitialState } from "./store/state";
 import { wireWsToStore } from "./store/wire";
 import { ThemeController } from "./shell/theme-controller";
+import { type Backend, demoBackend, selfBackend } from "./backend/backend";
+import type { WelcomeDialog, WelcomeTab } from "./welcome/welcome-dialog";
 
 // Module registration seam (see shell/registry.ts): each module directory
 // self-registers as an import side effect. T8 adds `./modules/usb`, T9 adds
@@ -17,23 +19,70 @@ import "./modules/usb";
 import "./modules/terminal";
 import "./modules/mcp";
 
-function wsUrl(): string {
-  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${window.location.host}/ws`;
-}
+const LINK_BUTTON = "text-awic-accent underline hover:opacity-80";
 
-const store = new Store(createInitialState());
-const ws = new WsClient({ url: wsUrl() });
-wireWsToStore(ws, store);
+const rootEl = document.getElementById("app");
+if (!rootEl) throw new Error("main: #app root missing from index.html");
+const root: HTMLElement = rootEl;
 const theme = new ThemeController();
 
-const ctx: ModuleContext = { ws, store, theme };
+/** Brings up the app against one backend. */
+function mount(backend: Backend): void {
+  const store = new Store(createInitialState());
+  const ws = new WsClient({ url: backend.wsUrl, ...(backend.socketFactory ? { socketFactory: backend.socketFactory } : {}) });
+  wireWsToStore(ws, store);
+  const ctx: ModuleContext = { ws, store, theme, backend };
+  const shell = document.createElement("awic-app") as AppShell;
+  shell.setContext(ctx);
+  root.appendChild(shell);
+  ws.connect();
+}
 
-const root = document.getElementById("app");
-if (!root) throw new Error("main: #app root missing from index.html");
+/** The GitHub Pages build (`vite build --mode pages`) has no server: it greets, and offers the simulated bench. */
+function startHosted(): void {
+  let demoRunning = false;
+  let dialog: WelcomeDialog | null = null;
 
-const shell = document.createElement("awic-app") as AppShell;
-shell.setContext(ctx);
-root.appendChild(shell);
+  const empty = document.createElement("div");
+  empty.className = "m-auto max-w-md p-6 text-center text-sm text-awic-fg-muted";
+  const reopen = document.createElement("button");
+  reopen.type = "button";
+  reopen.className = LINK_BUTTON;
+  reopen.textContent = "Start the demo or install AWIC";
+  reopen.addEventListener("click", () => void openWelcome("demo"));
+  empty.appendChild(reopen);
+  root.appendChild(empty);
 
-ws.connect();
+  const startDemo = async (): Promise<void> => {
+    if (demoRunning) return;
+    demoRunning = true;
+    const { demoSocketFactory } = await import("./demo");
+    empty.remove();
+    const notice = document.createElement("div");
+    notice.id = "demo-notice";
+    notice.className = "bg-awic-warn-bg px-4 py-1.5 text-sm text-awic-warn";
+    const install = document.createElement("button");
+    install.type = "button";
+    install.className = "underline hover:opacity-80";
+    install.textContent = "Install AWIC";
+    install.addEventListener("click", () => void openWelcome("install"));
+    notice.append("Simulated bench: every signal, port and log entry here is made up in your browser, and no hardware is touched. ", install, " to use your own instruments.");
+    root.appendChild(notice);
+    mount(demoBackend(demoSocketFactory()));
+  };
+
+  const openWelcome = async (tab: WelcomeTab): Promise<void> => {
+    if (!dialog) {
+      const { WelcomeDialog } = await import("./welcome/welcome-dialog");
+      dialog = new WelcomeDialog({ startDemo: () => void startDemo() });
+      root.appendChild(dialog.element);
+    }
+    dialog.open(tab);
+  };
+
+  if (window.location.hash === "#demo") void startDemo();
+  else void openWelcome("demo");
+}
+
+if (import.meta.env.MODE === "pages") startHosted();
+else mount(selfBackend(window.location));

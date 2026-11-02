@@ -3,9 +3,14 @@ import tailwindcss from "@tailwindcss/vite";
 
 // Dev server proxies /ws, /api and /mcp to the awic-server backend (SPECIFICATION.md
 // §11). Production is served by the Rust binary out of web/dist, which has no
-// proxy — the app talks to whatever origin it was loaded from (see
-// src/main.ts's wsUrl()).
-export default defineConfig({
+// proxy — the app talks to whatever origin it was loaded from
+// (src/backend/backend.ts's selfBackend()).
+//
+// `--mode pages` is the same app for GitHub Pages: relative asset paths for a
+// project page's subpath, and no server to talk to, so it opens with the
+// welcome dialog and the simulated bench (src/main.ts).
+export default defineConfig(({ mode }) => ({
+  base: mode === "pages" ? "./" : "/",
   plugins: [tailwindcss()],
   server: {
     port: 5173,
@@ -28,10 +33,10 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist",
+    outDir: mode === "pages" ? "dist-pages" : "dist",
   },
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
   },
-});
+}));

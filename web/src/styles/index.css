@@ -70,3 +70,19 @@ html,
 body {
   height: 100%;
 }
+
+/* The welcome dialog's traces sweep in once, like a capture arriving. */
+@media (prefers-reduced-motion: no-preference) {
+  .awic-trace {
+    animation: awic-trace-sweep 900ms ease-out both;
+  }
+}
+
+@keyframes awic-trace-sweep {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}

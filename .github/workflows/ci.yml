@@ -7,10 +7,18 @@
 #     (Raspberry Pi 3/4/5 on a 64-bit OS, other ARM64 boards and servers),
 #     armv7 for 32-bit ARM (Raspberry Pi 2/3/4 on a 32-bit OS).
 #   - awic-linux-<arch>.cdx.json, awic-web.cdx.json: CycloneDX SBOMs of each
-#     executable's Rust crates and of the web frontend's runtime packages.
+#     executable (Rust crates and the web frontend's runtime packages compiled
+#     in, tools/sbom/merge.sh) and of those web packages alone.
 #   - THIRD-PARTY-LICENSES.txt: the license notices of everything compiled
 #     into the executables, which MIT/BSD/Apache-2.0 require to go with them
 #     (tools/licenses/generate.sh; one file covers every target).
+#
+# Each release executable also gets GitHub attestations of its build and of its
+# SBOM (`gh attestation verify <file> --repo mrn2se/AgenticWebInstrumentControl`).
+#
+# A push to main publishes the web UI's hosted build to GitHub Pages: the
+# interactive demo and install assistant. Same gate as the
+# executables, and it carries the license notices of what it bundles.
 #
 # The audit job checks every Rust crate and npm package against the known
 # advisories (and npm's registry signatures); the executables are only
@@ -152,6 +160,14 @@ jobs:
           path: web/dist
           if-no-files-found: error
           retention-days: 7
+      - working-directory: web
+        run: npm run build:pages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-pages
+          path: web/dist-pages
+          if-no-files-found: error
+          retention-days: 7
 
   build:
     name: Build single executable (${{ matrix.asset }})
@@ -249,6 +265,9 @@ jobs:
             mv crates/awic-server/awic_bin.cdx.json "$asset.cdx.json"
           done
           npm sbom --prefix web --package-lock-only --omit dev --sbom-format cyclonedx > awic-web.cdx.json
+          for entry in $TARGETS; do
+            tools/sbom/merge.sh "${entry#*:}.cdx.json" awic-web.cdx.json
+          done
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-about
@@ -277,12 +296,62 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v8
         with:
           pattern: awic-*
           path: dist
           merge-multiple: true
+      # With no predicate given, this is a SLSA build provenance attestation.
+      - uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/awic-linux-x86_64
+            dist/awic-linux-aarch64
+            dist/awic-linux-armv7
+      # One SBOM per executable, so one attestation each.
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/awic-linux-x86_64
+          sbom-path: dist/awic-linux-x86_64.cdx.json
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/awic-linux-aarch64
+          sbom-path: dist/awic-linux-aarch64.cdx.json
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/awic-linux-armv7
+          sbom-path: dist/awic-linux-armv7.cdx.json
       - run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Enable once in the repository: Settings > Pages > Source: GitHub Actions.
+  pages:
+    name: Publish web UI to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [notices]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-pages
+          path: site
+      - uses: actions/download-artifact@v8
+        with:
+          name: awic-notices
+          path: notices
+      - run: cp notices/THIRD-PARTY-LICENSES.txt site/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v5

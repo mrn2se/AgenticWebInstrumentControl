@@ -1743,7 +1743,8 @@ class GraphModule extends AwicModule {
     const kind = this.imageKind();
     const channels = this.imageChannelsFor(kind);
     if (imageUnavailableReason(capture, kind, channels) !== null) return;
-    window.open(imageViewUrl({ capture: capture as string, kind, channels }), "_blank", "noopener");
+    const url = this.ctx.backend.resourceUrl(imageViewUrl({ capture: capture as string, kind, channels }));
+    if (url) window.open(url, "_blank", "noopener");
   }
 
   /**
@@ -1791,11 +1792,9 @@ class GraphModule extends AwicModule {
       );
       if (wanted.some((w) => String(w.channel) === current)) this.imageChannelEl.value = current;
     }
-    const reason = imageUnavailableReason(
-      this.currentImageCapture(),
-      kind,
-      this.imageChannelsFor(kind),
-    );
+    const reason = this.ctx.backend.resourceUrl("/") === null
+      ? "Server-drawn images need a real AWIC server: the demo has none to draw them."
+      : imageUnavailableReason(this.currentImageCapture(), kind, this.imageChannelsFor(kind));
     this.imageButtonEl.disabled = reason !== null;
     this.imageButtonEl.title = reason ?? `Open a ${kind} view of this capture in a new tab`;
   }
@@ -2336,7 +2335,7 @@ class GraphModule extends AwicModule {
         annotations = response.annotations ?? [];
         rateHz = this.effective?.cfg.rate_hz ?? this.currentRateHz();
         origin = this.captureT0Seconds;
-        if (response.truncated) this.decodeErrorEl.textContent = `truncated: ${response.omitted} annotation(s) omitted`;
+        this.decodeErrorEl.textContent = [response.note, response.truncated ? `truncated: ${response.omitted} annotation(s) omitted` : null].filter(Boolean).join("; ");
       } else {
         const rec = this.liveRecId;
         if (rec === null) {
@@ -2354,7 +2353,7 @@ class GraphModule extends AwicModule {
         });
         annotations = response.annotations ?? [];
         rateHz = this.liveRateHz;
-        if (response.truncated) this.decodeErrorEl.textContent = `truncated: ${response.omitted} annotation(s) omitted`;
+        this.decodeErrorEl.textContent = [response.note, response.truncated ? `truncated: ${response.omitted} annotation(s) omitted` : null].filter(Boolean).join("; ");
         this.decodeActive = true;
       }
       this.decodeAnnotations = annotations;

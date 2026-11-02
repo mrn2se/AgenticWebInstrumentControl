@@ -121,8 +121,9 @@ and every npm package's registry signature verified.
   executables with the web UI compiled in (`--features embed-web`). aarch64 is built natively on
   an ARM runner; armv7 is cross-built with the toolchain's `rust-lld` (`.cargo/config.toml`) and
   its tests run under qemu.
-- `awic-linux-<arch>.cdx.json`, `awic-web.cdx.json`: CycloneDX SBOMs of each executable's Rust
-  crates and of the web UI's runtime npm packages.
+- `awic-linux-<arch>.cdx.json`, `awic-web.cdx.json`: CycloneDX SBOMs of each executable (its Rust
+  crates and the web UI's runtime npm packages, merged by `tools/sbom/merge.sh`) and of the web
+  packages alone.
 - `THIRD-PARTY-LICENSES.txt`: the license notices of the third-party code compiled into the
   executables, one file for every target (Rust crates, the Rust standard library and musl, the
   web UI's npm packages), which their licenses require to go with them. [`tools/licenses/generate.sh`](../tools/licenses/generate.sh)
@@ -179,3 +180,10 @@ cargo build --release --locked --target aarch64-unknown-linux-musl \
   -p awic-server --bin awic --features embed-web
 scp target/aarch64-unknown-linux-musl/release/awic pi@raspberrypi:
 ```
+
+## The hosted web UI and its demo
+
+`make pages` builds the GitHub Pages variant into `web/dist-pages`, as CI does from `main`, and serves
+it at <http://127.0.0.1:4173/> (`PAGES_PORT=...` for another port). Append `#demo` to go straight to
+the simulated bench (`web/src/demo/`, SPECIFICATION.md §11.0.1).
+`URL=<page> node web/e2e/demo.cjs` drives every tab of the demo in a real browser.

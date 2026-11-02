@@ -4,6 +4,7 @@
 # Node.js
 node_modules/
 dist/
+dist-pages/
 
 # Generated code
 # web/src/proto/types.ts is generated from Rust via ts-rs at build time
