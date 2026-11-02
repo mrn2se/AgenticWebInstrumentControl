@@ -4,6 +4,7 @@ import { WsClient } from "../ws/client";
 import type { DecodedFrame } from "../ws/frame";
 import type { DecodedViewFrame } from "../ws/view-frame";
 import { demoSocketFactory } from ".";
+import { buildAnalogView } from "./server";
 import { LogicScene, PERIOD_S, WIRING } from "./scene";
 import { LOGIC_ID, SCOPE_ID } from "./usb-bench";
 
@@ -234,6 +235,111 @@ describe("the simulated server", () => {
     expect(events).toContain("mcp.activity");
     const later = await call(client.send("mcp.log", { after: first.last_seq }));
     expect(later.entries.length).toBeGreaterThan(0);
+    client.close();
+  });
+
+  it("shows traffic on the very first capture at the UI's defaults", async () => {
+    const client = connect();
+    await flush();
+    const { frames } = await captureLogic(client, 24_000_000, 1024);
+    const bytes = new Uint8Array(frames[0]!.payload.buffer, frames[0]!.payload.byteOffset, 1024);
+    const uart = new Set(bytes.map((b) => b & 1));
+    expect(uart.size).toBe(2);
+    client.close();
+  });
+
+  it("ends a capture when its device loses power, and frees the device for a new one", async () => {
+    const client = connect();
+    await flush();
+    const states: string[] = [];
+    client.events.on((e) => {
+      if (e.event === "acq.state") states.push(e.state);
+    });
+    await call(client.send("acq.configure", { device: SCOPE_ID, cfg: { rate_hz: 1_000_000, channels: [0], samples: 1000, ranges_v: [5], trigger: { kind: "edge", channel: 0, slope: "rising", level: 4.5 } } }));
+    await call(client.send("acq.start", { device: SCOPE_ID }));
+    expect(states.at(-1)).toBe("armed");
+    await call(client.send("usb.power", { hub: "3-3.4", port: 2, on: false }));
+    expect(states.at(-1)).toBe("stopped");
+    await call(client.send("usb.power", { hub: "3-3.4", port: 2, on: true }));
+    await flush(1000);
+    await call(client.send("acq.configure", { device: SCOPE_ID, cfg: { rate_hz: 1_000_000, channels: [0], samples: 100, ranges_v: [5] } }));
+    await expect(call(client.send("acq.start", { device: SCOPE_ID }))).resolves.toBeTruthy();
+    client.close();
+  });
+
+  it("finds every analog crossing, and gives up on a level the signal never reaches", async () => {
+    const client = connect();
+    await flush();
+    const rec = await call(client.send("rec.start", { device: SCOPE_ID, cfg: { rate_hz: 1_000_000, channels: [1], samples: 0, ranges_v: [5] } }));
+    await flush(1000);
+    const found = await call(client.send("rec.search", { rec: rec.rec, pattern: "CH2 rising 0V", max_matches: 3 }));
+    expect(found.matches[1]!.t_s - found.matches[0]!.t_s).toBeCloseTo(0.0001, 5);
+    expect(found.matches[2]!.t_s - found.matches[1]!.t_s).toBeCloseTo(0.0001, 5);
+    const never = await call(client.send("rec.search", { rec: rec.rec, pattern: "CH2 rising 4.5V" }));
+    expect(never.matches).toEqual([]);
+    await call(client.send("rec.stop", { rec: rec.rec }));
+    client.close();
+  });
+
+  it("refuses decoder settings the wires do not match, rather than decoding anyway", async () => {
+    const client = connect();
+    await flush();
+    const { started } = await captureLogic(client, 8_000_000, 160_000);
+    const uart = await call(client.send("capture.decode", { capture: started.capture, decoder: "uart", channels: [{ role: "rx", channel: 0 }], options: [{ id: "data_bits", value: 5 }] }));
+    expect(uart.annotations).toEqual([]);
+    expect(uart.note).toContain("8 data bits");
+    const spi = await call(client.send("capture.decode", { capture: started.capture, decoder: "spi", channels: [{ role: "clk", channel: 4 }, { role: "mosi", channel: 5 }, { role: "miso", channel: 6 }, { role: "cs", channel: 3 }], options: [{ id: "mode", value: "mode3" }] }));
+    expect(spi.annotations).toEqual([]);
+    expect(spi.note).toContain("mode 0");
+    client.close();
+  });
+
+  it("measures a long slow capture without aliasing", async () => {
+    const client = connect();
+    await flush();
+    await call(client.send("acq.configure", { device: SCOPE_ID, cfg: { rate_hz: 100_000, channels: [1], samples: 1_000_000, ranges_v: [2.5] } }));
+    const started = await call(client.send("acq.start", { device: SCOPE_ID }));
+    const { results } = await call(client.send("capture.measure", { capture: started.capture, channel: 1, measurements: ["vpp", "frequency"] }));
+    const vpp = results.find((r) => r.kind === "vpp");
+    const freq = results.find((r) => r.kind === "frequency");
+    expect(vpp && "value" in vpp ? vpp.value : 0).toBeGreaterThan(2.5);
+    expect(freq && "value" in freq ? freq.value : 0).toBeCloseTo(10_000, -1);
+    client.close();
+  });
+
+  it("does not draw a sine as a line when zoomed out", () => {
+    const cal = { channel: 1, scale: 10 / 255, offset: -5, unit: "V", range_v: 5 };
+    // 1 MS/s, 1.2 s, 1000 columns: buckets exactly twelve sine periods long.
+    const view = buildAnalogView([1], [cal], 1_000_000, 0, 1_200_000, 1000);
+    expect(view.kind).toBe(4);
+    const volts = (code: number): number => code * cal.scale + cal.offset;
+    expect(volts(view.payload[1]!) - volts(view.payload[0]!)).toBeGreaterThan(2.5);
+  });
+
+  it("holds a serial session while its device is away, and reopens it", async () => {
+    const client = connect();
+    await flush();
+    const states: string[] = [];
+    client.events.on((e) => {
+      if (e.event === "term.state") states.push(e.state);
+    });
+    let frames = 0;
+    client.termFrames.on(() => {
+      frames += 1;
+    });
+    const { session } = await call(client.send("term.open", { source: "serial:/dev/ttyUSB0" }));
+    await flush(2500);
+    expect(frames).toBeGreaterThan(0);
+    await call(client.send("usb.power", { hub: "3-3", port: 2, on: false }));
+    expect(states).toEqual(["waiting"]);
+    frames = 0;
+    await flush(2500);
+    expect(frames).toBe(0);
+    await expect(call(client.send("term.write", { session, data: "x" }))).rejects.toThrow(/left the bus/);
+    await call(client.send("usb.power", { hub: "3-3", port: 2, on: true }));
+    expect(states).toEqual(["waiting", "open"]);
+    await flush(1500);
+    expect(frames).toBeGreaterThan(0);
     client.close();
   });
 

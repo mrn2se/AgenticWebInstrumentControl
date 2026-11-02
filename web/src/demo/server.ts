@@ -20,7 +20,7 @@ import type {
 import type { SocketLike } from "../ws/socket";
 import { pushLeb128, sampleFrame, termFrame, viewFrame } from "./frames";
 import { MCP_SCRIPT, waveformSvg, type ScriptedCall } from "./mcp-script";
-import { I2C_HZ, LogicScene, PERIOD_S, SPI_HZ, UART_BAUD, WIRING, analogVolts, noiseCode, sampleAtOrAfter } from "./scene";
+import { I2C_HZ, LogicScene, PERIOD_S, SPI_HZ, UART_BAUD, WIRING, analogPeriodS, analogVolts, noiseCode, sampleAtOrAfter } from "./scene";
 import { ESP_ID, LOGIC_ID, SCOPE_ID, UART_BRIDGE_ID, UsbBench } from "./usb-bench";
 
 /**
@@ -46,6 +46,7 @@ const MAX_CAPTURE_SAMPLES = 4_000_000;
 const CHUNK_SAMPLES = 65_536;
 const MAX_ANNOTATIONS = 20_000;
 const MAX_LOG_ENTRIES = 300;
+const IDLE_SAMPLES_BEFORE_BURST = 16;
 
 const DEVICES: Readonly<Record<string, { label: string; vid: number; pid: number; capability: CapabilityInfo }>> = {
   [LOGIC_ID]: {
@@ -245,6 +246,7 @@ export class DemoServer {
         this.emit({ event: "rec.state", rec: rec.rec, state: "error", msg: rec.msg } as Omit<ServerEvent, "v">);
       }
     }
+    for (const socket of this.connections) socket.stopStreamsOn(device);
     this.busy.delete(device);
   }
 
@@ -288,7 +290,11 @@ export class DemoServer {
     const wall = Math.floor((this.now() - this.bootMs) / 1000 / PERIOD_S) * PERIOD_S;
     const span = cfg.samples / cfg.rate_hz;
     const trigger = cfg.trigger;
-    if (!trigger) return wall;
+    if (!trigger) {
+      // A short window would otherwise end in the idle gap before the first burst.
+      const digital = DEVICES[device]?.capability.kind === "digital";
+      return digital ? wall + this.scene.firstAt("uart") - IDLE_SAMPLES_BEFORE_BURST / cfg.rate_hz : wall;
+    }
     const searchFrom = wall + span / 2;
     const found = DEVICES[device]?.capability.kind === "analog"
       ? this.findAnalogCrossing(trigger.channel, trigger.slope, trigger.level ?? 0, searchFrom, searchFrom + 0.01)
@@ -305,8 +311,10 @@ export class DemoServer {
 
   private findAnalogCrossing(channel: number, slope: "rising" | "falling", level: number, t0: number, t1: number): number | null {
     const step = 2e-7;
+    // The signals repeat, so a level not crossed in one period is never crossed.
+    const end = Math.min(t1, t0 + PERIOD_S);
     let prev = analogVolts(channel, t0);
-    for (let t = t0 + step; t < t1; t += step) {
+    for (let t = t0 + step; t < end; t += step) {
       const v = analogVolts(channel, t);
       if (slope === "rising" ? prev < level && v >= level : prev > level && v <= level) return t;
       prev = v;
@@ -468,7 +476,7 @@ export class DemoServer {
         const t = this.findAnalogCrossing(parsed.channel, parsed.slope ?? "rising", parsed.level, from, t1);
         if (t === null) break;
         matches.push({ t_s: t, sample: Math.round(t * rec.rate) });
-        from = t + 1 / 10_000;
+        from = t;
       }
       return matches;
     }
@@ -624,6 +632,9 @@ function decodeRefusal(
       if (typeof baud === "number" && baud !== 0 && Math.abs(baud - UART_BAUD) / UART_BAUD > 0.03) {
         return `Framing errors at ${baud} baud: this line runs at ${UART_BAUD}. Set baud to 0 to detect it.`;
       }
+      const dataBits = options.find((o) => o.id === "data_bits")?.value ?? 8;
+      const parity = options.find((o) => o.id === "parity")?.value ?? "none";
+      if (dataBits !== 8 || parity !== "none") return "Framing errors with those settings: this line is 8 data bits, no parity.";
       return enoughRate(UART_BAUD);
     }
     case "i2c":
@@ -634,6 +645,8 @@ function decodeRefusal(
       const { clk, mosi, miso, cs } = WIRING.spi;
       if (role("clk") !== clk || role("mosi") !== mosi || role("miso") !== miso || role("cs") !== cs) return wrong("CS D3, SCK D4, MOSI D5, MISO D6");
       if (!has(clk, mosi, miso, cs)) return "D3 to D6 must all be captured.";
+      const mode = options.find((o) => o.id === "mode")?.value ?? "mode0";
+      if (mode !== "mode0") return `This bus runs in mode 0, not ${String(mode).replace("mode", "mode ")}: read that way, its words would be wrong.`;
       return enoughRate(SPI_HZ);
     }
     default:
@@ -696,14 +709,14 @@ function measureDigital(scene: LogicScene, channel: number, t0: number, t1: numb
 }
 
 function measureAnalog(capture: Capture, channel: number, kinds: readonly MeasurementKind[]): MeasurementResult[] {
+  // Consecutive samples, never a stride, which could alias a periodic signal away.
+  // Both signals repeat, so the start of a long capture measures like all of it.
   const count = Math.min(capture.samples, 200_000);
-  const step = capture.samples / count;
   const cal = capture.calibration.find((c) => c.channel === channel);
   if (!cal) return kinds.map((kind) => ({ kind, unavailable: "this channel was not captured" }));
   const volts: number[] = [];
   for (let i = 0; i < count; i++) {
-    const sample = Math.floor(i * step);
-    const code = codeFor(analogVolts(channel, capture.startS + sample / capture.rate), cal, sample);
+    const code = codeFor(analogVolts(channel, capture.startS + i / capture.rate), cal, i);
     volts.push(code * cal.scale + cal.offset);
   }
   let min = Infinity;
@@ -717,7 +730,7 @@ function measureAnalog(capture: Capture, channel: number, kinds: readonly Measur
   for (let i = 1; i < volts.length; i++) {
     if (volts[i - 1]! < mid && volts[i]! >= mid && (rises.length === 0 || i - rises.at(-1)! > 4)) rises.push(i);
   }
-  const period = rises.length >= 2 ? (((rises.at(-1)! - rises[0]!) / (rises.length - 1)) * step) / capture.rate : null;
+  const period = rises.length >= 2 ? ((rises.at(-1)! - rises[0]!) / (rises.length - 1)) / capture.rate : null;
   let highCount = 0;
   let sum = 0;
   let squares = 0;
@@ -862,6 +875,18 @@ export function buildDigitalView(
   return { kind: 2, itemCount, firstSample: aligned, samplesPerItem, payload };
 }
 
+function analogExtremes(channel: number, cal: ChannelCalibration, period: number): { min: number; max: number } {
+  let min = 255;
+  let max = 0;
+  const steps = 2000;
+  for (let i = 0; i < steps; i++) {
+    const code = codeFor(analogVolts(channel, (i / steps) * period), cal, i);
+    if (code < min) min = code;
+    if (code > max) max = code;
+  }
+  return { min, max };
+}
+
 export function buildAnalogView(
   channels: readonly number[],
   calibration: readonly ChannelCalibration[],
@@ -888,7 +913,16 @@ export function buildAnalogView(
   const payload = new Uint8Array(itemCount * 2 * n);
   const probes = Math.min(samplesPerItem, 12);
   for (let c = 0; c < n; c++) {
+    // A bucket holding a whole period holds the signal's extremes: probing it at
+    // fixed spacing could land on one phase every time and draw a sine as a line.
+    const period = analogPeriodS(channels[c]!);
+    const wholePeriods = samplesPerItem / rate >= period ? analogExtremes(channels[c]!, calibration[c]!, period) : null;
     for (let i = 0; i < itemCount; i++) {
+      if (wholePeriods) {
+        payload[(c * itemCount + i) * 2] = wholePeriods.min;
+        payload[(c * itemCount + i) * 2 + 1] = wholePeriods.max;
+        continue;
+      }
       let min = 255;
       let max = 0;
       for (let p = 0; p < probes; p++) {
@@ -923,6 +957,8 @@ interface Session {
   sequence: number;
   timers: Array<ReturnType<typeof setInterval>>;
   input: string;
+  /** A serial source whose device left the bus: nothing passes until it returns. */
+  away: boolean;
 }
 
 const ESP_BOOT = "\x1b[0mESP-ROM:esp32c6-20220919\r\nrst:0x1 (POWERON),boot:0x7c\r\n[awic-demo] firmware 1.4.2, sensor at I2C 0x48, flash JEDEC EF 40 18\r\n[awic-demo] type help for commands\r\nesp> ";
@@ -980,6 +1016,13 @@ export class DemoSocket implements SocketLike {
     if (!this.closed) this.onmessage?.(data);
   }
 
+  /** The device left the bus: its captures end here, before its claim can pass to a new one. */
+  stopStreamsOn(device: string): void {
+    for (const stream of [...this.streams.values()]) {
+      if (stream.device === device) stream.stop();
+    }
+  }
+
   deliverLog(text: string): void {
     for (const session of this.sessions.values()) {
       if (session.source === "log") this.writeTerm(session, text);
@@ -988,10 +1031,16 @@ export class DemoSocket implements SocketLike {
 
   onSourcesChanged(): void {
     const sources = new Set(this.server.terminalSources().map((s) => s.source));
-    for (const session of [...this.sessions.values()]) {
-      if (session.source.startsWith("serial:") && !sources.has(session.source)) {
-        this.deliver(JSON.stringify({ v: 1, event: "term.state", session: session.id, state: "waiting", msg: "the device left the bus" }));
-      }
+    for (const session of this.sessions.values()) {
+      if (!session.source.startsWith("serial:")) continue;
+      const away = !sources.has(session.source);
+      if (away === session.away) continue;
+      session.away = away;
+      session.input = "";
+      this.deliver(JSON.stringify(away
+        ? { v: 1, event: "term.state", session: session.id, state: "waiting", msg: "the device left the bus" }
+        : { v: 1, event: "term.state", session: session.id, state: "open" }));
+      if (!away && session.source === "serial:/dev/ttyACM0") this.writeTerm(session, ESP_BOOT);
     }
   }
 
@@ -1292,7 +1341,7 @@ export class DemoSocket implements SocketLike {
     const server = this.server;
     const info = server.terminalSources().find((s) => s.source === source);
     if (!info) throw new DemoError("source_not_found", `no terminal source ${source}`);
-    const session: Session = { id: server.allocSession(), source, sequence: 0, timers: [], input: "" };
+    const session: Session = { id: server.allocSession(), source, sequence: 0, timers: [], input: "", away: false };
     this.sessions.set(session.id, session);
     const start = (fn: () => void, everyMs: number): void => {
       session.timers.push(setInterval(fn, everyMs));
@@ -1307,7 +1356,9 @@ export class DemoSocket implements SocketLike {
       later(ESP_BOOT);
     } else if (source === "serial:/dev/ttyUSB0") {
       let i = 0;
-      start(() => this.writeTerm(session, NMEA_LINES[i++ % NMEA_LINES.length]!), 1000);
+      start(() => {
+        if (!session.away) this.writeTerm(session, NMEA_LINES[i++ % NMEA_LINES.length]!);
+      }, 1000);
     } else if (source === "log") {
       later(server.logHistory() || "Server log: actions by the UI and by agents appear here.\r\n");
     } else if (source === "scpi") {
@@ -1338,6 +1389,7 @@ export class DemoSocket implements SocketLike {
     const session = this.sessions.get(id);
     if (!session) throw new DemoError("session_not_found", `no terminal session ${id}`);
     if (session.source === "log" || session.source === "decode") return;
+    if (session.away) throw new DemoError("source_unavailable", "the device left the bus");
     if (session.source === "scpi") {
       session.input += data;
       let at: number;

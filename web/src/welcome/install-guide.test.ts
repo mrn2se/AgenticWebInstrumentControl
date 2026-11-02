@@ -30,6 +30,19 @@ describe("buildInstallScript", () => {
     expect(lines[1]).toBe("set -eu");
   });
 
+  it("never lets set -e miss a failure, and never uses a predictable temp file", () => {
+    for (const choices of allChoices()) {
+      const text = buildInstallScript(choices);
+      expect(text).not.toContain("&&");
+      expect(text).not.toContain("/tmp/");
+    }
+  });
+
+  it("gives the service and the user access to serial ports", () => {
+    expect(script({ run: "systemd" })).toContain("SupplementaryGroups=plugdev dialout");
+    expect(script({ run: "once" })).toContain("usermod -aG plugdev,dialout");
+  });
+
   it("installs prerequisites only on request, and never for an update", () => {
     expect(script({ prerequisites: true })).toContain("sigrok-firmware-fx2lafw");
     expect(script({ prerequisites: false })).not.toContain("sigrok-firmware-fx2lafw");

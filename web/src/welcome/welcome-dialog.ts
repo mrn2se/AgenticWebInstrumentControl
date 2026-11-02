@@ -181,6 +181,17 @@ export class WelcomeDialog {
     pre.textContent = script;
     const form = this.bodyEl.querySelector<HTMLFormElement>("#welcome-install") as HTMLFormElement;
     const read = (): void => {
+      // Rendering replaces the form; keep keyboard users on the control they just changed.
+      const focused = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLSelectElement
+        ? document.activeElement
+        : null;
+      const focusSelector = focused === null
+        ? null
+        : focused.id
+          ? `#${focused.id}`
+          : focused.type === "radio"
+            ? `input[name="${focused.name}"][value="${focused.value}"]`
+            : `input[name="${focused.name}"]`;
       const data = new FormData(form);
       const action = data.get("action") === "update" ? "update" : "install";
       const prerequisites = form.querySelector<HTMLInputElement>('[name="prerequisites"]') as HTMLInputElement;
@@ -194,6 +205,7 @@ export class WelcomeDialog {
         network: data.has("network"),
       };
       this.renderInstall();
+      if (focusSelector) this.bodyEl.querySelector<HTMLElement>(focusSelector)?.focus();
     };
     form.addEventListener("change", read);
     const copy = this.bodyEl.querySelector<HTMLButtonElement>("#welcome-copy") as HTMLButtonElement;

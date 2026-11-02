@@ -1,5 +1,5 @@
 // End-to-end check of the GitHub Pages build against its simulated bench, in
-// a real browser. Serve web/dist-pages, then: URL=http://127.0.0.1:4173/ node demo.js
+// a real browser. Serve web/dist-pages, then: URL=http://127.0.0.1:4173/ node demo.cjs
 // SHOTS=dir also saves screenshots.
 const { chromium } = require('playwright');
 
@@ -26,7 +26,10 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   // The install assistant answers its choices.
   await page.click('#welcome-tabs [data-tab=install]');
   await page.check('input[name=run][value=systemd]');
-  await page.check('input[name=attestation]');
+  await page.focus('input[name=attestation]');
+  await page.keyboard.press('Space');
+  const focused = await page.evaluate(() => document.activeElement?.getAttribute('name'));
+  check(focused === 'attestation', `changing an option keeps keyboard focus on it (${focused})`);
   const script = await page.textContent('#welcome-script');
   check(script.includes('awic.service') && script.includes('gh attestation verify'), 'install assistant: systemd and attestation show in the commands');
   await shot('02-install');
@@ -60,6 +63,12 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   await page.waitForTimeout(100);
   const roles = graph.locator('#decode-roles select');
   if (await roles.count()) await roles.first().selectOption({ label: 'D0' }).catch(async () => { await roles.first().selectOption('0'); });
+  await roles.first().selectOption({ label: 'D7' });
+  await graph.locator('#decode-apply').click();
+  await page.waitForTimeout(300);
+  const refusal = await graph.locator('#decode-error').textContent();
+  check(/D0/.test(refusal), `a decode on the wrong wire says where the traffic is (${refusal})`);
+  await roles.first().selectOption({ label: 'D0' });
   await graph.locator('#decode-apply').click();
   await page.waitForTimeout(500);
   const frames = await graph.locator('#decode-frames').textContent();

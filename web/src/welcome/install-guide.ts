@@ -1,7 +1,8 @@
 /**
  * The install assistant's output: a paste-ready shell block for the choices
  * made. Pure, so every combination is tested. The whole block runs in one
- * `set -eu` subshell: pasted line by line, a failed verification or download
+ * `set -eu` subshell, with no `a && b` where `a` matters (`set -e` ignores a
+ * failure left of `&&`): pasted line by line, a failed verification or download
  * would otherwise be followed by the steps that install the bad file.
  */
 
@@ -42,7 +43,7 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/local/bin/awic
 DynamicUser=yes
-SupplementaryGroups=plugdev
+SupplementaryGroups=plugdev dialout
 StateDirectory=awic
 Environment=AWIC_SERVER__STATE_DIR=/var/lib/awic${network ? "\nEnvironment=AWIC_SERVER__BIND=0.0.0.0:8080" : ""}
 Restart=on-failure
@@ -79,16 +80,19 @@ export function buildInstallScript(c: InstallChoices): string {
       "",
       "# USB access without root: instruments, hubs and port power for the plugdev group.",
       "# Read the rules first. As they are, they cover every matching device and hub.",
-      `curl -fsSL -o /tmp/99-awic.rules ${UDEV_URL}`,
-      "sudo install -m 644 /tmp/99-awic.rules /etc/udev/rules.d/99-awic.rules",
-      "sudo udevadm control --reload-rules && sudo udevadm trigger",
+      `rules="$(mktemp)"`,
+      `curl -fsSL -o "$rules" ${UDEV_URL}`,
+      `sudo install -m 644 "$rules" /etc/udev/rules.d/99-awic.rules`,
+      `rm -f "$rules"`,
+      "sudo udevadm control --reload-rules",
+      "sudo udevadm trigger",
     );
-    if (c.run === "once") lines.push(`sudo usermod -aG plugdev "$USER"`);
+    if (c.run === "once") lines.push("# plugdev for the rules above, dialout for serial ports", `sudo usermod -aG plugdev,dialout "$USER"`);
     lines.push("");
   }
 
   lines.push("# The executable for this machine", ...assetSelection(c.arch));
-  if (c.run === "once") lines.push(`mkdir -p awic && cd awic`);
+  if (c.run === "once") lines.push("mkdir -p awic", "cd awic");
   else lines.push(`cd "$(mktemp -d)"`);
   lines.push(`curl -fL -o "$asset.new" "${RELEASE}/$asset"`, "");
 
@@ -117,7 +121,7 @@ export function buildInstallScript(c: InstallChoices): string {
   } else {
     lines.push("# Install the executable");
     if (c.action === "update") lines.push("sudo systemctl stop awic");
-    lines.push(`sudo install -m 755 "$asset.new" /usr/local/bin/awic`, "");
+    lines.push(`sudo install -m 755 "$asset.new" /usr/local/bin/awic`, `rm -f "$asset.new"`, "");
     if (c.action === "install") {
       if (c.network) lines.push("# Listens on every interface: anyone on your network can drive the bench.");
       lines.push(
@@ -137,7 +141,7 @@ export function buildInstallScript(c: InstallChoices): string {
 
   if (needsNewLogin(c)) {
     const run = c.network ? `./${c.arch === "auto" ? "awic-linux-*" : `awic-linux-${c.arch}`} --bind 0.0.0.0:8080` : `./${c.arch === "auto" ? "awic-linux-*" : `awic-linux-${c.arch}`}`;
-    lines.push("", "# Then log out and back in, replug the instruments, and start it:", `#   cd awic && ${run}`);
+    lines.push("", "# Then log out and back in, replug the instruments, and start it:", `#   cd awic; ${run}`);
   }
   return lines.join("\n");
 }

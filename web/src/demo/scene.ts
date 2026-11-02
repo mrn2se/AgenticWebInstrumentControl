@@ -290,6 +290,11 @@ function upperCount(values: readonly number[], x: number): number {
 const CAL_HZ = 1000;
 const SINE_HZ = 10_000;
 
+/** How long each oscilloscope channel takes to repeat. */
+export function analogPeriodS(channel: number): number {
+  return channel === 0 ? 1 / CAL_HZ : 1 / SINE_HZ;
+}
+
 /** Volts on an oscilloscope channel without noise: CH1 a probe-calibration square, CH2 a slightly distorted sine. */
 export function analogVolts(channel: number, t: number): number {
   if (channel === 0) {

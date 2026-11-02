@@ -186,4 +186,4 @@ scp target/aarch64-unknown-linux-musl/release/awic pi@raspberrypi:
 `make pages` builds the GitHub Pages variant into `web/dist-pages`, as CI does from `main`, and serves
 it at <http://127.0.0.1:4173/> (`PAGES_PORT=...` for another port). Append `#demo` to go straight to
 the simulated bench (`web/src/demo/`, SPECIFICATION.md §11.0.1).
-`URL=<page> node web/e2e/demo.js` drives every tab of the demo in a real browser.
+`URL=<page> node web/e2e/demo.cjs` drives every tab of the demo in a real browser.

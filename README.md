@@ -71,7 +71,7 @@ adjust `99-awic.rules` to the devices and hubs AWIC should reach:
 ```sh
 curl -LO https://raw.githubusercontent.com/mrn2se/AgenticWebInstrumentControl/main/tools/udev/99-awic.rules
 sudo cp 99-awic.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
-sudo usermod -aG plugdev $USER   # then log out and back in, and replug the instruments
+sudo usermod -aG plugdev,dialout $USER   # then log out and back in, and replug the instruments
 ```
 
 **3. Download and run** the latest release (shown for x86_64; use your architecture's file from the
@@ -93,7 +93,7 @@ locks are kept across restarts in `~/.local/state/awic` (or `$XDG_STATE_HOME/awi
 The [demo page's install assistant](https://mrn2se.github.io/AgenticWebInstrumentControl/) writes the
 commands for your choice of new install or update, by hand or as a systemd service, with or without
 the packages above and attestation checking. The service runs as its own unprivileged user in the
-`plugdev` group, from `/usr/local/bin/awic`, with its state in `/var/lib/awic`.
+`plugdev` and `dialout` groups, from `/usr/local/bin/awic`, with its state in `/var/lib/awic`.
 
 ### Verify a download
 

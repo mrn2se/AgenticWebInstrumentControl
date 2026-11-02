@@ -2335,7 +2335,7 @@ class GraphModule extends AwicModule {
         annotations = response.annotations ?? [];
         rateHz = this.effective?.cfg.rate_hz ?? this.currentRateHz();
         origin = this.captureT0Seconds;
-        if (response.truncated) this.decodeErrorEl.textContent = `truncated: ${response.omitted} annotation(s) omitted`;
+        this.decodeErrorEl.textContent = [response.note, response.truncated ? `truncated: ${response.omitted} annotation(s) omitted` : null].filter(Boolean).join("; ");
       } else {
         const rec = this.liveRecId;
         if (rec === null) {
@@ -2353,7 +2353,7 @@ class GraphModule extends AwicModule {
         });
         annotations = response.annotations ?? [];
         rateHz = this.liveRateHz;
-        if (response.truncated) this.decodeErrorEl.textContent = `truncated: ${response.omitted} annotation(s) omitted`;
+        this.decodeErrorEl.textContent = [response.note, response.truncated ? `truncated: ${response.omitted} annotation(s) omitted` : null].filter(Boolean).join("; ");
         this.decodeActive = true;
       }
       this.decodeAnnotations = annotations;
