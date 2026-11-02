@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSampleFrame } from "./fixtures";
-import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext } from "./traces";
+import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext, streamRedrawDelayMs } from "./traces";
 import type { Trace } from "../../render/types";
 import type { AnalogTrace, DigitalTrace } from "../../render/types";
 
@@ -238,5 +238,16 @@ describe("frameToTraces with a subset of digital channels", () => {
     const frame = buildSampleFrame({ encoding: "bitwise-digital", channelCount: 2, sampleCount: 1, payload: [1 << 5, (1 << 5) | (1 << 7)] });
     const traces = frameToTraces(frame, subset) as DigitalTrace[];
     expect(traces.map((t) => [t.channel, t.segments[0]!.state])).toEqual([[5, "high"], [7, "toggled"]]);
+  });
+});
+
+describe("streamRedrawDelayMs", () => {
+  it("keeps the usual pace while redraws are cheap", () => {
+    expect(streamRedrawDelayMs(0)).toBe(100);
+    expect(streamRedrawDelayMs(5)).toBe(100);
+  });
+
+  it("backs off as redraws get expensive", () => {
+    expect(streamRedrawDelayMs(400)).toBe(4000);
   });
 });

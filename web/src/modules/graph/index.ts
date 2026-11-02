@@ -43,7 +43,7 @@ import {
 } from "./device-activity";
 import { collisionNote, deviceDisplayLabel } from "./device-label";
 import { buildLayout, controlFromRecChannel, type AnalogChannelSettings } from "./panel-layout";
-import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext } from "./traces";
+import { FrameSpanPlacer, frameToTraces, type PlacedFrame, streamRedrawDelayMs, TraceAccumulator, type TraceContext } from "./traces";
 import { identityCalibration } from "./scale";
 import { cursorReadout } from "./cursors";
 import { formatSampleRate, formatSiDuration, formatSiFrequency } from "../../format";
@@ -296,6 +296,8 @@ class GraphModule extends AwicModule {
   private streamTracesFor: number | null = null;
   /** Holds each decimated frame until the time it covers is known (#48). */
   private streamPlacer = new FrameSpanPlacer(0);
+  /** How long the last redraw of the capture on screen took. */
+  private streamRedrawMs = 0;
   /** Whether anything of the capture on screen has been handed to the renderer yet. */
   private streamDrawn = false;
   /** Whether the plot has shown any data since the page loaded; until then it carries a hint instead of a blank area. */
@@ -615,6 +617,11 @@ class GraphModule extends AwicModule {
           // The capture's end places a decimated last frame still held (#48).
           if (event.stream === this.streamTracesFor && (event.state === "stopped" || event.state === "error")) {
             this.addStreamFrames(this.streamPlacer.finish(this.captureT0Seconds + this.streamTimebaseSeconds()));
+            // A redraw still waiting may have backed off for seconds: nothing more is coming.
+            if (this.streamDrawTimer !== null) {
+              this.cancelStreamDraw();
+              this.drawStreamTraces(event.stream);
+            }
           }
         } else if (event.event === "rec.state") {
           // Any recording, not only this tab's: one an agent or another tab
@@ -639,6 +646,7 @@ class GraphModule extends AwicModule {
           this.streamTracesFor = frame.header.streamId;
           this.streamViewFollows = true;
           this.streamDrawn = false;
+          this.streamRedrawMs = 0;
           this.captureTrigger = null;
         }
         this.addStreamFrames(this.streamPlacer.push(frame));
@@ -1284,9 +1292,9 @@ class GraphModule extends AwicModule {
       return;
     }
     // Redrawing everything received so far on every frame is quadratic in
-    // a slow capture's hundreds of small frames; one redraw per 100 ms
-    // keeps the picture current, and the last one shows the whole capture.
-    this.streamDrawTimer ??= setTimeout(() => this.drawStreamTraces(streamId), 100);
+    // a slow capture's hundreds of small frames; a redraw every so often
+    // keeps the picture current, and the capture's end draws all of it.
+    this.streamDrawTimer ??= setTimeout(() => this.drawStreamTraces(streamId), streamRedrawDelayMs(this.streamRedrawMs));
   }
 
   private cancelStreamDraw(): void {
@@ -1364,8 +1372,10 @@ class GraphModule extends AwicModule {
     this.streamDrawTimer = null;
     const renderer = this.renderer;
     if (this.mode !== "single" || this.streamTracesFor !== streamId || !renderer) return;
+    const startedAt = performance.now();
     const traces = this.streamTraces.snapshot();
     renderer.setTraces({ traces });
+    this.streamRedrawMs = performance.now() - startedAt;
     // A renderer fits its viewport to the first frame only (SPEC §5.3), so
     // the rest of the capture would land outside it: widen it as it grows -
     // unless the user has zoomed or panned meanwhile, which a redraw every
