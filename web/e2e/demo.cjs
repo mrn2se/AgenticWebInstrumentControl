@@ -115,6 +115,14 @@ const check = (ok, what) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); i
   check(stray === 0, `the scope capture draws no stray strokes (${stray} columns)`);
   check(await graph.locator('#image').isDisabled(), 'the Image button is off where no server can draw it');
 
+  // Leaving for Live and coming back keeps the capture's status.
+  await graph.locator('#mode-live').click();
+  await page.waitForTimeout(150);
+  await graph.locator('#mode-single').click();
+  await page.waitForTimeout(150);
+  const backStatus = await graph.locator('#acq-status').textContent();
+  check(/stopped/.test(backStatus), `back from Live, the status still says the capture ended (${backStatus})`);
+
   // Live.
   await graph.locator('#mode-live').click();
   await page.waitForTimeout(150);

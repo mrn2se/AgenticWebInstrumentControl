@@ -625,7 +625,9 @@ class GraphModule extends AwicModule {
     );
     this.unsubscribers.push(
       this.ctx.ws.frames.on((frame) => {
-        if (this.mode !== "single" || frame.header.streamId !== this.acqState.streamId || !this.renderer) return;
+        // Also while Live is on screen: the capture goes on, and frames skipped
+        // here would be holes in it on the way back to Single.
+        if (frame.header.streamId !== this.acqState.streamId || !this.renderer) return;
         if (this.streamTracesFor !== frame.header.streamId) {
           // The same origin the traces are placed at, so the frame list and the
           // plot share one axis (B-71) - the capture's first frame, where its
@@ -981,13 +983,31 @@ class GraphModule extends AwicModule {
     this.searchSectionEl.hidden = mode !== "live";
     this.renderChannelControls(); // Measure buttons only show in Single mode
     this.refreshImageControls();
-    this.renderRunStopButtons();
+    // The status line reads differently per mode, and kept the old mode's text
+    // until the next event: "idle" over a running capture, or for good over one
+    // that had ended meanwhile.
+    this.renderAcqStatus();
     this.renderLiveStatus();
     this.renderLiveButtons();
     this.renderMeasurements(); // which capture is the current one changed
     this.mountRenderer();
     this.resetDecodeResults();
     this.renderDecodeRoles();
+    if (mode === "single") this.showStreamTraces();
+  }
+
+  /** Back in Single: the capture this tab has been collecting, in place of what Live left on the plot. */
+  private showStreamTraces(): void {
+    const renderer = this.renderer;
+    if (!renderer || this.streamTracesFor === null) return;
+    const traces = this.streamTraces.snapshot();
+    if (traces.length === 0) return;
+    renderer.setTraces({ traces });
+    this.streamDrawn = true;
+    this.streamViewFollows = true;
+    const bounds = tracesTimeBounds(traces);
+    if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
+    this.markPlotHasData();
   }
 
   /** Wires one `Popover` per settings button — closes on Escape/outside-click, never affects layout (each panel is `absolute`, SPEC §11.3). */
@@ -1241,8 +1261,9 @@ class GraphModule extends AwicModule {
   private addStreamFrames(placed: readonly PlacedFrame[]): void {
     const renderer = this.renderer;
     const streamId = this.streamTracesFor;
-    if (placed.length === 0 || !renderer || streamId === null || this.mode !== "single") return;
+    if (placed.length === 0 || !renderer || streamId === null) return;
     for (const { frame, spanSeconds } of placed) this.streamTraces.add(frameToTraces(frame, this.streamTraceContext(spanSeconds)));
+    if (this.mode !== "single") return;
     if (!this.streamDrawn) {
       this.streamDrawn = true;
       const traces = this.streamTraces.snapshot();
