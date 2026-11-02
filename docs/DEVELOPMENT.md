@@ -121,8 +121,9 @@ and every npm package's registry signature verified.
   executables with the web UI compiled in (`--features embed-web`). aarch64 is built natively on
   an ARM runner; armv7 is cross-built with the toolchain's `rust-lld` (`.cargo/config.toml`) and
   its tests run under qemu.
-- `awic-linux-<arch>.cdx.json`, `awic-web.cdx.json`: CycloneDX SBOMs of each executable's Rust
-  crates and of the web UI's runtime npm packages.
+- `awic-linux-<arch>.cdx.json`, `awic-web.cdx.json`: CycloneDX SBOMs of each executable (its Rust
+  crates and the web UI's runtime npm packages, merged by `tools/sbom/merge.sh`) and of the web
+  packages alone.
 - `THIRD-PARTY-LICENSES.txt`: the license notices of the third-party code compiled into the
   executables, one file for every target (Rust crates, the Rust standard library and musl, the
   web UI's npm packages), which their licenses require to go with them. [`tools/licenses/generate.sh`](../tools/licenses/generate.sh)
