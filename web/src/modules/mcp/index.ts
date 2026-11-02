@@ -395,7 +395,7 @@ class McpModule extends AwicModule {
   }
 
   private renderConnection(): void {
-    const url = mcpEndpointUrl(window.location, this.status?.endpoint_path ?? "/mcp");
+    const url = mcpEndpointUrl(this.ctx.backend.mcpLocation, this.status?.endpoint_path ?? "/mcp");
     const auth = this.status?.auth_required ?? false;
     this.endpointEl.textContent = url;
     if (this.status) {
@@ -405,7 +405,7 @@ class McpModule extends AwicModule {
         ? "A bearer token is required ([auth].token). The snippets prompt for it; it is never shown here."
         : "No token required.";
       this.authEl.className = `m-0 text-xs ${auth ? "text-awic-warn" : "text-awic-fg-muted"}`;
-      const note = reachabilityNote(window.location, s.bind);
+      const note = reachabilityNote(this.ctx.backend.mcpLocation, s.bind);
       this.reachEl.hidden = note === null;
       this.reachEl.textContent = note ?? "";
     }

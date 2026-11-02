@@ -1,5 +1,5 @@
 .PHONY: build test image run run-rootful web-install web-build e2e visa udev clean \
-	types backend frontend native run-backend run-lan run-frontend licenses
+	types backend frontend native run-backend run-lan run-frontend licenses pages
 
 # One image name for build and run; override with `make run IMAGE=...`.
 IMAGE ?= localhost/awic:dev
@@ -52,6 +52,14 @@ web/node_modules/.package-lock.json: web/package-lock.json
 # Build the frontend into web/dist
 frontend: types web/node_modules/.package-lock.json
 	cd web && npm run build
+
+# The GitHub Pages site on this machine: the same build CI publishes, with the
+# welcome dialog and the demo.
+PAGES_HOST ?= 127.0.0.1
+PAGES_PORT ?= 4173
+pages: types web/node_modules/.package-lock.json
+	cd web && npm run build:pages
+	cd web && npx vite preview --mode pages --host $(PAGES_HOST) --port $(PAGES_PORT) --strictPort
 
 # One self-contained binary with web/dist compiled in, like the CI release
 native: frontend

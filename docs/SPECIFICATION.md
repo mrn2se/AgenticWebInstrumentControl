@@ -1609,6 +1609,21 @@ live view.
 
 ---
 
+### 11.0.1 The demo
+
+Modules see the server through `ModuleContext`: its `WsClient`, its store, and a `Backend`
+(`web/src/backend/`) answering what the protocol does not: where its HTTP resources are, and what
+address MCP clients use. A backend is either the page's own server or the simulated bench.
+
+`web/src/demo/` implements this document's wire protocol behind the `SocketLike` seam `WsClient`
+already has, and computes results from a signal defined as a function of time (`scene.ts`), so what
+it decodes and measures is what it draws. It has no server-drawn images, and its pattern language
+stops at edges.
+
+`vite build --mode pages` is the GitHub Pages build: no server, so it opens with the welcome dialog
+(demo, install commands). `.github/workflows/ci.yml` deploys it from `main`. It talks to no AWIC
+server, so `[server] allowed_origins` does not list it.
+
 ## 11.1 Theme
 
 The UI offers a **light / dark switch** with three states — system (follows
