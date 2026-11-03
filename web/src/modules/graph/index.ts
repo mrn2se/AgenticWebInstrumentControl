@@ -1026,6 +1026,10 @@ class GraphModule extends AwicModule {
     this.streamViewFollows = true;
     const bounds = tracesTimeBounds(traces);
     if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
+    // The first frame may have arrived while Live was on screen, which skips
+    // the first draw that places the trigger marker.
+    this.captureTrigger ??= this.triggerMarkerForCapture();
+    this.renderTriggerMarker();
     this.markPlotHasData();
   }
 
