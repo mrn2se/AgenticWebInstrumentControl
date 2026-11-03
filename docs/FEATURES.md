@@ -122,7 +122,7 @@ summary tree; `wait_for_pattern` resolves on the next match as it happens.
 ## Rendered views (M16)
 
 One server-side renderer behind MCP `render_view`, `capture.render` on the wire, `GET /api/render`
-and the Graph tab's **Image** button, so a person and an agent see the same picture (SPEC §5.6):
+and the Graph tab's **Analyze** menu, so a person and an agent see the same picture (SPEC §5.6):
 
 | View | Answers |
 |---|---|
@@ -174,7 +174,7 @@ readable answer instead of a client timeout.
 - Clicking **AWIC** in the header opens an About dialog: what AWIC is, a link to the project on
   GitHub, and GitHub Discussions as the place for questions, ideas and problems.
 - Graph: capability-driven controls, Single and Live modes, cursors, measurements, decode panel,
-  search box, Image button. WebGL2 renderer by default, Plotly selectable.
+  search box, Analyze menu. WebGL2 renderer by default, Plotly selectable.
 - Graph plot: wheel/pinch zoom, sideways swipe or Shift+wheel pan, drag, double-click fit; zoom and
   pan stay within the data. Volt grid and V/div per analog lane, a trigger marker (time and level)
   on triggered captures, labels that stay readable over traces, a hint on the empty plot. A new

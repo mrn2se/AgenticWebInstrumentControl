@@ -1,5 +1,5 @@
 /**
- * The URL behind the graph module's **Image** button: a server-rendered view
+ * The URL behind the graph module's **Analyze** menu: a server-rendered view
  * of the current capture (SPECIFICATION.md §5.6).
  *
  * The browser already draws live traces in WebGL, so this is not how the graph
@@ -55,9 +55,9 @@ export function imageViewUrl(params: ImageViewParams): string {
 }
 
 /**
- * Why the button cannot be used right now, or `null` when it can.
+ * Why a menu entry cannot be used right now, or `null` when it can.
  *
- * Returned as a sentence rather than a boolean because it becomes the button's
+ * Returned as a sentence rather than a boolean because it becomes the entry's
  * `title`: a control that is disabled without saying why is a control a person
  * clicks repeatedly.
  */

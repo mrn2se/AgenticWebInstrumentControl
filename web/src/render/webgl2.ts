@@ -11,9 +11,11 @@ import {
   buildDigitalLevelVertices,
   buildDigitalToggleVertices,
 } from "./webgl2-geometry";
+import { splitAnalogTrace, splitEnvelopeTrace } from "./trace-runs";
 import { formatSiTime, formatVolts, timeTicks, voltTicks } from "./webgl2-axis";
 import {
   clampViewport,
+  minViewSpanSeconds,
   fitAllViewport,
   panViewport,
   pointerXToTime,
@@ -167,6 +169,8 @@ class Webgl2Renderer implements WaveformRenderer {
   private viewport: Viewport | null = null;
   private theme: ThemeColors | null = null;
   private trigger: TriggerMarker | null = null;
+  /** See `setSampleRate`. */
+  private minTimeSpan = minViewSpanSeconds(0);
   /** See `setTimeLimits`; `null` falls back to the traces' own extent. */
   private timeLimits: TimeRange | null = null;
 
@@ -190,7 +194,7 @@ class Webgl2Renderer implements WaveformRenderer {
     let next: Viewport;
     if (action.kind === "zoom") {
       const pivot = pointerXToTime(e.clientX - rect.left, rect.width, this.viewport);
-      next = zoomViewport(this.viewport, pivot, action.factor);
+      next = zoomViewport(this.viewport, pivot, action.factor, this.minTimeSpan);
     } else {
       const span = this.viewport.t1 - this.viewport.t0;
       next = panViewport(this.viewport, (action.px / Math.max(rect.width, 1)) * span);
@@ -358,6 +362,10 @@ class Webgl2Renderer implements WaveformRenderer {
     this.timeLimits = range && range.t1 > range.t0 ? range : null;
   }
 
+  setSampleRate(rateHz: number): void {
+    this.minTimeSpan = minViewSpanSeconds(rateHz);
+  }
+
   onViewportChange(cb: (t0: number, t1: number) => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
@@ -454,34 +462,38 @@ class Webgl2Renderer implements WaveformRenderer {
 
       switch (trace.kind) {
         case "analog":
-          items.push({
-            data: buildAnalogLineVertices(trace, this.originSeconds),
-            primitive: GL_LINE_STRIP,
-            panel,
-            range,
-            offset,
-            color: channelColor(trace.channel, background),
-          });
+          for (const run of splitAnalogTrace(trace)) {
+            items.push({
+              data: buildAnalogLineVertices(run, this.originSeconds),
+              primitive: GL_LINE_STRIP,
+              panel,
+              range,
+              offset,
+              color: channelColor(trace.channel, background),
+            });
+          }
           break;
         case "analog-envelope": {
-          items.push({
-            data: buildAnalogEnvelopeVertices(trace, this.originSeconds),
-            primitive: GL_TRIANGLE_STRIP,
-            panel,
-            range,
-            offset,
-            color: channelColor(trace.channel, background, 0.35),
-          });
-          // The outline: a solid stroke around the band so it
-          // reads as one continuous shape even where the semi-transparent
-          // fill alone is fragile to sub-pixel-wide buckets.
-          const outline = buildAnalogEnvelopeOutlineVertices(trace, this.originSeconds);
           const strokeColor = channelColor(trace.channel, background, 0.9);
-          if (outline.top.length > 0) {
-            items.push({ data: outline.top, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
-          }
-          if (outline.bottom.length > 0) {
-            items.push({ data: outline.bottom, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
+          for (const run of splitEnvelopeTrace(trace)) {
+            items.push({
+              data: buildAnalogEnvelopeVertices(run, this.originSeconds),
+              primitive: GL_TRIANGLE_STRIP,
+              panel,
+              range,
+              offset,
+              color: channelColor(trace.channel, background, 0.35),
+            });
+            // The outline: a solid stroke around the band so it
+            // reads as one continuous shape even where the semi-transparent
+            // fill alone is fragile to sub-pixel-wide buckets.
+            const outline = buildAnalogEnvelopeOutlineVertices(run, this.originSeconds);
+            if (outline.top.length > 0) {
+              items.push({ data: outline.top, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
+            }
+            if (outline.bottom.length > 0) {
+              items.push({ data: outline.bottom, primitive: GL_LINE_STRIP, panel, range, offset, color: strokeColor });
+            }
           }
           break;
         }
@@ -718,12 +730,13 @@ class Webgl2Renderer implements WaveformRenderer {
   /**
    * Text on a backdrop of the plot's own background, so a trace running
    * through a lane label or a tick label never makes it unreadable (the
-   * traces start at the left edge, right where the labels are).
+   * traces start at the left edge, right where the labels are). Light enough
+   * that the trace still shows through: it looked like a capture starting late.
    */
   private drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, baseline: number, color: string): void {
     const width = ctx.measureText(text).width;
     ctx.save();
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.5;
     ctx.fillStyle = this.theme?.background ?? "#ffffff";
     ctx.fillRect(x - 2, baseline - 10, width + 4, 13);
     ctx.restore();

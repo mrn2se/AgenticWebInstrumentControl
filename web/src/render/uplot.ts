@@ -40,6 +40,8 @@ class UplotRenderer implements WaveformRenderer {
     // Nothing is ever mounted; there is no zoom to limit.
   }
 
+  setSampleRate(_rateHz: number): void {}
+
   /** Nothing is ever mounted, so nothing ever fires; still returns a working unsubscribe function. */
   onViewportChange(_cb: (t0: number, t1: number) => void): () => void {
     return () => {

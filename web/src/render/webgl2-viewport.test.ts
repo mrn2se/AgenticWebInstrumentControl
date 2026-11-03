@@ -8,6 +8,7 @@ import {
   traceSetTimeBounds,
   wheelAction,
   wheelDeltaPixels,
+  minViewSpanSeconds,
   zoomViewport,
 } from "./webgl2-viewport";
 import type { Trace } from "./types";
@@ -212,5 +213,18 @@ describe("wheelAction", () => {
 
   it("does nothing for an empty event", () => {
     expect(wheelAction(base)).toEqual({ kind: "none" });
+  });
+});
+
+describe("minViewSpanSeconds", () => {
+  it("keeps a few samples in view, and zooming stops there", () => {
+    const min = minViewSpanSeconds(1000);
+    expect(min).toBe(0.01);
+    const v = zoomViewport({ t0: 0, t1: 0.02 }, 0.01, 0.1, min);
+    expect(v.t1 - v.t0).toBeCloseTo(0.01, 12);
+  });
+
+  it("has a floor without a known rate", () => {
+    expect(minViewSpanSeconds(0)).toBeGreaterThan(0);
   });
 });

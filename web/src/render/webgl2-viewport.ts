@@ -16,13 +16,24 @@ export interface Viewport {
 const MIN_SPAN_SECONDS = 1e-12;
 
 /** Zooms `viewport` by `factor` (>1 zooms out, <1 zooms in) about `pivot`, which stays fixed on screen. */
-export function zoomViewport(viewport: Viewport, pivot: number, factor: number): Viewport {
+export function zoomViewport(viewport: Viewport, pivot: number, factor: number, minSpanSeconds = MIN_SPAN_SECONDS): Viewport {
   const span = viewport.t1 - viewport.t0;
   if (!(span > 0) || !(factor > 0)) return viewport;
-  const newSpan = Math.max(span * factor, MIN_SPAN_SECONDS);
+  const newSpan = Math.max(span * factor, minSpanSeconds);
   const ratio = (pivot - viewport.t0) / span;
   const t0 = pivot - ratio * newSpan;
   return { t0, t1: t0 + newSpan };
+}
+
+/** Samples still across the plot at the deepest zoom. */
+const MIN_SAMPLES_IN_VIEW = 10;
+
+/**
+ * The narrowest useful view at a sample rate. Between two samples a Live view
+ * has nothing to ask the server for, and the plot went blank as if data was lost.
+ */
+export function minViewSpanSeconds(rateHz: number): number {
+  return rateHz > 0 ? MIN_SAMPLES_IN_VIEW / rateHz : MIN_SPAN_SECONDS;
 }
 
 /** Pans `viewport` by a fixed offset in seconds; the span is unchanged. */

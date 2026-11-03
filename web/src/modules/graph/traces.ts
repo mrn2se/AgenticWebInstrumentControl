@@ -219,6 +219,19 @@ export class FrameSpanPlacer {
   }
 }
 
+/** Shortest time between redraws of a capture still arriving. */
+const STREAM_REDRAW_MIN_MS = 100;
+
+/**
+ * How long to wait before the next redraw of a capture still arriving, given
+ * how long the last one took. Each redraw copies and uploads all of the capture
+ * so far, so at a fixed rate a large one left the page no time for anything
+ * else. Ten times the cost keeps redraws to about a tenth of the page's time.
+ */
+export function streamRedrawDelayMs(lastRedrawMs: number): number {
+  return Math.max(STREAM_REDRAW_MIN_MS, lastRedrawMs * 10);
+}
+
 type MutableTrace =
   | { kind: "analog"; channel: number; label: string; t: number[]; v: number[] }
   | { kind: "analog-envelope"; channel: number; label: string; t0: number[]; t1: number[]; vMin: number[]; vMax: number[] }

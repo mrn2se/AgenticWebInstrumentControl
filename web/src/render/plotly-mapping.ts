@@ -1,3 +1,4 @@
+import { splitAnalogTrace, splitEnvelopeTrace } from "./trace-runs";
 import type { Data as PlotlyData, Layout as PlotlyLayout } from "plotly.js-dist-min";
 import type { AnalogPanelSpec, Layout, PanelSpec, ThemeColors, Trace, TraceSet } from "./types";
 import { analogPanelBounds } from "./webgl2-panel-transform";
@@ -89,9 +90,8 @@ function analogTraceToPlotly(trace: Extract<Trace, { kind: "analog" }>, panel: n
 /**
  * Renders a min/max envelope as a filled band: the min line, then the max
  * line with `fill: "tonexty"` back down to it. Bucket boundaries (`t1`) are
- * not separately plotted — adjacent buckets are assumed contiguous, which
- * holds for AWIC's decimated previews (SPEC §3.2) — so the band is drawn
- * against each bucket's `t0`.
+ * not separately plotted — the caller passes contiguous buckets only
+ * (`splitEnvelopeTrace`) — so the band is drawn against each bucket's `t0`.
  */
 function analogEnvelopeToPlotly(
   trace: Extract<Trace, { kind: "analog-envelope" }>,
@@ -201,10 +201,10 @@ export function tracesToPlotlyData(traceSet: TraceSet, layout: Layout): PlotlyDa
     const panel = requirePanel(index, trace.kind === "analog-envelope" ? "analog" : trace.kind, trace.channel);
     switch (trace.kind) {
       case "analog":
-        data.push(analogTraceToPlotly(trace, panel));
+        for (const run of splitAnalogTrace(trace)) data.push(analogTraceToPlotly(run, panel));
         break;
       case "analog-envelope":
-        data.push(...analogEnvelopeToPlotly(trace, panel));
+        for (const run of splitEnvelopeTrace(trace)) data.push(...analogEnvelopeToPlotly(run, panel));
         break;
       case "digital":
         data.push(...digitalTraceToPlotly(trace, panel));

@@ -43,7 +43,7 @@ import {
 } from "./device-activity";
 import { collisionNote, deviceDisplayLabel } from "./device-label";
 import { buildLayout, controlFromRecChannel, type AnalogChannelSettings } from "./panel-layout";
-import { FrameSpanPlacer, frameToTraces, type PlacedFrame, TraceAccumulator, type TraceContext } from "./traces";
+import { FrameSpanPlacer, frameToTraces, type PlacedFrame, streamRedrawDelayMs, TraceAccumulator, type TraceContext } from "./traces";
 import { identityCalibration } from "./scale";
 import { cursorReadout } from "./cursors";
 import { formatSampleRate, formatSiDuration, formatSiFrequency } from "../../format";
@@ -149,8 +149,10 @@ class GraphModule extends AwicModule {
   private stopButtonEl!: HTMLButtonElement;
   private followButtonEl!: HTMLButtonElement;
   private snapshotButtonEl!: HTMLButtonElement;
-  private imageButtonEl!: HTMLButtonElement;
-  private imageKindEl!: HTMLSelectElement;
+  private analyzeButtonEl!: HTMLButtonElement;
+  private analyzePanelEl!: HTMLElement;
+  private analyzeChannelRowEl!: HTMLElement;
+  private analyzePopover: Popover | null = null;
   private imageChannelEl!: HTMLSelectElement;
   private acqStatusEl!: HTMLElement;
   private recStatusEl!: HTMLElement;
@@ -296,6 +298,8 @@ class GraphModule extends AwicModule {
   private streamTracesFor: number | null = null;
   /** Holds each decimated frame until the time it covers is known (#48). */
   private streamPlacer = new FrameSpanPlacer(0);
+  /** How long the last redraw of the capture on screen took. */
+  private streamRedrawMs = 0;
   /** Whether anything of the capture on screen has been handed to the renderer yet. */
   private streamDrawn = false;
   /** Whether the plot has shown any data since the page loaded; until then it carries a hint instead of a blank area. */
@@ -353,14 +357,22 @@ class GraphModule extends AwicModule {
         <!-- SPEC 5.6: a server-drawn view of the current capture, to open,
              save or share. The same renderer an agent reaches through the
              render_view tool, so both see the same picture. -->
-        <select id="image-kind" class="${SELECT}" title="Which view to draw">
-          <option value="waveform">Waveform</option>
-          <option value="eye">Eye</option>
-          <option value="histogram">Histogram</option>
-          <option value="anomalies">Anomalies</option>
-        </select>
-        <select id="image-channel" disabled class="${SELECT}" title="Channel to fold"></select>
-        <button id="image" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Image</button>
+        <div class="relative">
+          <button id="analyze-btn" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Analyze</button>
+          <div id="analyze-panel" hidden class="${POPOVER_PANEL}">
+            <div id="analyze-channel-row" class="${POPOVER_ROW}">
+              <label class="${LABEL}">Channel <select id="image-channel" class="${SELECT}"></select></label>
+            </div>
+            <div class="flex flex-col gap-1">
+              <button data-image-kind="eye" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL} text-left">Eye diagram</button>
+              <button data-image-kind="histogram" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL} text-left">Histogram</button>
+              <button data-image-kind="anomalies" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL} text-left">Anomalies</button>
+            </div>
+            <div class="mt-1 border-t border-awic-border pt-2">
+              <button data-image-kind="waveform" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL} w-full text-left">Open plot as image</button>
+            </div>
+          </div>
+        </div>
 
         <div class="relative">
           <button id="popover-channels-btn" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Channels &amp; ranges</button>
@@ -522,8 +534,9 @@ class GraphModule extends AwicModule {
     this.stopButtonEl = this.requireEl("#stop");
     this.followButtonEl = this.requireEl("#follow");
     this.snapshotButtonEl = this.requireEl("#snapshot");
-    this.imageButtonEl = this.requireEl("#image");
-    this.imageKindEl = this.requireEl("#image-kind");
+    this.analyzeButtonEl = this.requireEl("#analyze-btn");
+    this.analyzePanelEl = this.requireEl("#analyze-panel");
+    this.analyzeChannelRowEl = this.requireEl("#analyze-channel-row");
     this.imageChannelEl = this.requireEl("#image-channel");
     this.acqStatusEl = this.requireEl("#acq-status");
     this.recStatusEl = this.requireEl("#rec-status");
@@ -615,6 +628,11 @@ class GraphModule extends AwicModule {
           // The capture's end places a decimated last frame still held (#48).
           if (event.stream === this.streamTracesFor && (event.state === "stopped" || event.state === "error")) {
             this.addStreamFrames(this.streamPlacer.finish(this.captureT0Seconds + this.streamTimebaseSeconds()));
+            // A redraw still waiting may have backed off for seconds: nothing more is coming.
+            if (this.streamDrawTimer !== null) {
+              this.cancelStreamDraw();
+              this.drawStreamTraces(event.stream);
+            }
           }
         } else if (event.event === "rec.state") {
           // Any recording, not only this tab's: one an agent or another tab
@@ -625,7 +643,9 @@ class GraphModule extends AwicModule {
     );
     this.unsubscribers.push(
       this.ctx.ws.frames.on((frame) => {
-        if (this.mode !== "single" || frame.header.streamId !== this.acqState.streamId || !this.renderer) return;
+        // Also while Live is on screen: the capture goes on, and frames skipped
+        // here would be holes in it on the way back to Single.
+        if (frame.header.streamId !== this.acqState.streamId || !this.renderer) return;
         if (this.streamTracesFor !== frame.header.streamId) {
           // The same origin the traces are placed at, so the frame list and the
           // plot share one axis (B-71) - the capture's first frame, where its
@@ -637,6 +657,7 @@ class GraphModule extends AwicModule {
           this.streamTracesFor = frame.header.streamId;
           this.streamViewFollows = true;
           this.streamDrawn = false;
+          this.streamRedrawMs = 0;
           this.captureTrigger = null;
         }
         this.addStreamFrames(this.streamPlacer.push(frame));
@@ -981,13 +1002,35 @@ class GraphModule extends AwicModule {
     this.searchSectionEl.hidden = mode !== "live";
     this.renderChannelControls(); // Measure buttons only show in Single mode
     this.refreshImageControls();
-    this.renderRunStopButtons();
+    // The status line reads differently per mode, and kept the old mode's text
+    // until the next event: "idle" over a running capture, or for good over one
+    // that had ended meanwhile.
+    this.renderAcqStatus();
     this.renderLiveStatus();
     this.renderLiveButtons();
     this.renderMeasurements(); // which capture is the current one changed
     this.mountRenderer();
     this.resetDecodeResults();
     this.renderDecodeRoles();
+    if (mode === "single") this.showStreamTraces();
+  }
+
+  /** Back in Single: the capture this tab has been collecting, in place of what Live left on the plot. */
+  private showStreamTraces(): void {
+    const renderer = this.renderer;
+    if (!renderer || this.streamTracesFor === null) return;
+    const traces = this.streamTraces.snapshot();
+    if (traces.length === 0) return;
+    renderer.setTraces({ traces });
+    this.streamDrawn = true;
+    this.streamViewFollows = true;
+    const bounds = tracesTimeBounds(traces);
+    if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
+    // The first frame may have arrived while Live was on screen, which skips
+    // the first draw that places the trigger marker.
+    this.captureTrigger ??= this.triggerMarkerForCapture();
+    this.renderTriggerMarker();
+    this.markPlotHasData();
   }
 
   /** Wires one `Popover` per settings button — closes on Escape/outside-click, never affects layout (each panel is `absolute`, SPEC §11.3). */
@@ -998,7 +1041,9 @@ class GraphModule extends AwicModule {
       return popover;
     };
     this.triggerPopover = wire(this.triggerPopoverBtn, this.triggerPopoverPanel);
+    this.analyzePopover = wire(this.analyzeButtonEl, this.analyzePanelEl);
     this.popovers = [
+      this.analyzePopover,
       wire(this.channelsPopoverBtn, this.channelsPopoverPanel),
       this.triggerPopover,
       wire(this.acqPopoverBtn, this.acqPopoverPanel),
@@ -1241,8 +1286,9 @@ class GraphModule extends AwicModule {
   private addStreamFrames(placed: readonly PlacedFrame[]): void {
     const renderer = this.renderer;
     const streamId = this.streamTracesFor;
-    if (placed.length === 0 || !renderer || streamId === null || this.mode !== "single") return;
+    if (placed.length === 0 || !renderer || streamId === null) return;
     for (const { frame, spanSeconds } of placed) this.streamTraces.add(frameToTraces(frame, this.streamTraceContext(spanSeconds)));
+    if (this.mode !== "single") return;
     if (!this.streamDrawn) {
       this.streamDrawn = true;
       const traces = this.streamTraces.snapshot();
@@ -1259,13 +1305,14 @@ class GraphModule extends AwicModule {
       if (bounds) renderer.setViewport(bounds.t0, bounds.t1);
       this.captureTrigger = this.triggerMarkerForCapture();
       this.renderTriggerMarker();
+      this.renderTimeLimits();
       this.markPlotHasData();
       return;
     }
     // Redrawing everything received so far on every frame is quadratic in
-    // a slow capture's hundreds of small frames; one redraw per 100 ms
-    // keeps the picture current, and the last one shows the whole capture.
-    this.streamDrawTimer ??= setTimeout(() => this.drawStreamTraces(streamId), 100);
+    // a slow capture's hundreds of small frames; a redraw every so often
+    // keeps the picture current, and the capture's end draws all of it.
+    this.streamDrawTimer ??= setTimeout(() => this.drawStreamTraces(streamId), streamRedrawDelayMs(this.streamRedrawMs));
   }
 
   private cancelStreamDraw(): void {
@@ -1309,6 +1356,7 @@ class GraphModule extends AwicModule {
   private renderTimeLimits(): void {
     const renderer = this.renderer;
     if (!renderer) return;
+    renderer.setSampleRate(this.mode === "live" ? this.liveRateHz : this.streamRateHz());
     const summary =
       this.mode === "live" && this.liveRecId !== null
         ? this.liveRecordings.find((r) => r.rec === this.liveRecId)
@@ -1343,8 +1391,10 @@ class GraphModule extends AwicModule {
     this.streamDrawTimer = null;
     const renderer = this.renderer;
     if (this.mode !== "single" || this.streamTracesFor !== streamId || !renderer) return;
+    const startedAt = performance.now();
     const traces = this.streamTraces.snapshot();
     renderer.setTraces({ traces });
+    this.streamRedrawMs = performance.now() - startedAt;
     // A renderer fits its viewport to the first frame only (SPEC §5.3), so
     // the rest of the capture would land outside it: widen it as it grows -
     // unless the user has zoomed or panned meanwhile, which a redraw every
@@ -1734,17 +1784,17 @@ class GraphModule extends AwicModule {
 
   /**
    * Opens the server-rendered view of the current capture in a new tab
-   * (SPEC §5.6). A tab rather than an inline panel: the point of this button
+   * (SPEC §5.6). A tab rather than an inline panel: the point of this menu
    * is to get a picture *out* — to save, to paste into an issue, to show
    * someone — and the live traces are already on screen behind it.
    */
-  private onImageClick(): void {
+  private onImageClick(kind: ImageKind): void {
     const capture = this.currentImageCapture();
-    const kind = this.imageKind();
     const channels = this.imageChannelsFor(kind);
     if (imageUnavailableReason(capture, kind, channels) !== null) return;
     const url = this.ctx.backend.resourceUrl(imageViewUrl({ capture: capture as string, kind, channels }));
     if (url) window.open(url, "_blank", "noopener");
+    this.analyzePopover?.close();
   }
 
   /**
@@ -1756,12 +1806,6 @@ class GraphModule extends AwicModule {
     return this.mode === "single" ? this.acqState.captureHandle : this.liveSnapshotCapture;
   }
 
-  /** The chosen view, validated against the options the select actually offers. */
-  private imageKind(): ImageKind {
-    const value = this.imageKindEl.value;
-    return value === "eye" || value === "histogram" || value === "anomalies" ? value : "waveform";
-  }
-
   /** Hardware channel numbers (D4 is 4, CH1 is 0), as the server's render takes them. */
   private imageChannelsFor(kind: ImageKind): number[] {
     if (!isSingleChannel(kind)) return [];
@@ -1770,13 +1814,11 @@ class GraphModule extends AwicModule {
   }
 
   /**
-   * Keeps the channel picker and the button's own state in step with the
-   * chosen view. The reason a disabled button gives is its `title`, because a
-   * control that refuses without saying why gets clicked again.
+   * Keeps the menu in step with the capture and its channels. What a disabled
+   * control gives as its reason is its `title`, because a control that refuses
+   * without saying why gets clicked again.
    */
   private refreshImageControls(): void {
-    const kind = this.imageKind();
-    this.imageChannelEl.disabled = !isSingleChannel(kind);
     const enabled = this.channelState.filter((c) => c.enabled);
     const wanted = enabled.map((c) => ({ channel: c.control.channel, label: c.control.label }));
     const current = this.imageChannelEl.value;
@@ -1792,11 +1834,25 @@ class GraphModule extends AwicModule {
       );
       if (wanted.some((w) => String(w.channel) === current)) this.imageChannelEl.value = current;
     }
-    const reason = this.ctx.backend.resourceUrl("/") === null
-      ? "Server-drawn images need a real AWIC server: the demo has none to draw them."
-      : imageUnavailableReason(this.currentImageCapture(), kind, this.imageChannelsFor(kind));
-    this.imageButtonEl.disabled = reason !== null;
-    this.imageButtonEl.title = reason ?? `Open a ${kind} view of this capture in a new tab`;
+    this.analyzeChannelRowEl.hidden = wanted.length <= 1;
+
+    const capture = this.currentImageCapture();
+    const menuReason =
+      this.ctx.backend.resourceUrl("/") === null
+        ? "These views are drawn by an AWIC server, and the demo has none."
+        : capture
+          ? null
+          : "Run a capture first — there is nothing to analyze yet.";
+    this.analyzeButtonEl.disabled = menuReason !== null;
+    this.analyzeButtonEl.title = menuReason ?? "Views of this capture, each opens in a new tab";
+    if (menuReason !== null) this.analyzePopover?.close();
+
+    for (const button of this.analyzePanelEl.querySelectorAll<HTMLButtonElement>("[data-image-kind]")) {
+      const kind = button.dataset.imageKind as ImageKind;
+      const reason = imageUnavailableReason(capture, kind, this.imageChannelsFor(kind));
+      button.disabled = reason !== null;
+      button.title = reason ?? "Opens in a new tab";
+    }
   }
 
   private async onSnapshotClick(): Promise<void> {
@@ -2473,8 +2529,9 @@ class GraphModule extends AwicModule {
     this.stopButtonEl.addEventListener("click", () => void this.onStopClick());
     this.followButtonEl.addEventListener("click", () => this.onFollowClick());
     this.snapshotButtonEl.addEventListener("click", () => void this.onSnapshotClick());
-    this.imageButtonEl.addEventListener("click", () => this.onImageClick());
-    this.imageKindEl.addEventListener("change", () => this.refreshImageControls());
+    for (const button of this.analyzePanelEl.querySelectorAll<HTMLButtonElement>("[data-image-kind]")) {
+      button.addEventListener("click", () => this.onImageClick(button.dataset.imageKind as ImageKind));
+    }
     this.imageChannelEl.addEventListener("change", () => this.refreshImageControls());
     this.searchButtonEl.addEventListener("click", () => void this.onSearchClick());
     this.waitButtonEl.addEventListener("click", () => void this.onWaitClick());

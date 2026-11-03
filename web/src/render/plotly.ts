@@ -133,6 +133,10 @@ export class PlotlyRenderer implements WaveformRenderer {
     // Intentionally empty.
   }
 
+  setSampleRate(_rateHz: number): void {
+    // Intentionally empty.
+  }
+
   setViewport(t0: number, t1: number): void {
     this.viewport = { t0, t1 };
     if (!this.plotly || !this.el || !this.layout) return;

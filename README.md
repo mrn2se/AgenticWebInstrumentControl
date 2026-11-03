@@ -190,7 +190,7 @@ delete_recording({ "rec": 1 })   // frees its memory; snapshots are kept
 
 ## Views an agent (or a person) can look at
 
-`render_view` over MCP, `GET /api/render` in a browser and the Graph tab's **Image** button go
+`render_view` over MCP, `GET /api/render` in a browser and the Graph tab's **Analyze** menu go
 through one server-side renderer, so the picture a person shares and the picture an agent receives
 are the same:
 
