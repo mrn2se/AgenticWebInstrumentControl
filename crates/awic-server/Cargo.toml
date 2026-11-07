@@ -24,6 +24,7 @@ awic-proto.workspace = true
 # defined locally (see `src/usb.rs`), so the real backends can be wired in
 # later without touching this crate's logic.
 awic-fake.workspace = true
+awic-sim.workspace = true
 awic-usb.workspace = true
 awic-native.workspace = true
 awic-record.workspace = true

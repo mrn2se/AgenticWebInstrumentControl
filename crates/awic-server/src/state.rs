@@ -80,6 +80,8 @@ struct Inner {
     /// indefinitely for long-lived WebSocket "requests" to finish on their
     /// own (SPECIFICATION.md's graceful-shutdown expectation).
     shutdown_tx: broadcast::Sender<()>,
+    /// The virtual bench, when `[sim] enabled` (set once by `main.rs`).
+    sim: std::sync::OnceLock<awic_sim::SimBench>,
 }
 
 /// The application's shared state. Cheap to clone (an `Arc` underneath),
@@ -148,7 +150,18 @@ impl AppState {
             mcp_sessions: crate::mcp::route::new_sessions(),
             mcp_monitor,
             shutdown_tx,
+            sim: std::sync::OnceLock::new(),
         }))
+    }
+
+    /// Attaches the virtual bench. Called once, before serving.
+    pub fn set_sim(&self, bench: awic_sim::SimBench) {
+        let _ = self.0.sim.set(bench);
+    }
+
+    /// The virtual bench, if this server runs one.
+    pub fn sim(&self) -> Option<&awic_sim::SimBench> {
+        self.0.sim.get()
     }
 
     pub fn terminal(&self) -> &SessionManager {

@@ -18,6 +18,8 @@ Options:
   -s, --set KEY=VALUE    Override one setting, e.g. --set server.bind=0.0.0.0:8080
                          (repeatable; KEY is section.key as in the config file)
       --bind ADDR        Shorthand for --set server.bind=ADDR
+      --sim              Shorthand for --set sim.enabled=true: a virtual bench
+                         (a simulated board and instruments) to try AWIC on
   -h, --help             Show this help
 
 Settings are read from the built-in defaults, then the config file, then
@@ -69,6 +71,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--bind" => out
                 .overrides
                 .push(("server.bind".to_string(), value("--bind")?)),
+            "--sim" => out
+                .overrides
+                .push(("sim.enabled".to_string(), "true".to_string())),
             "-s" | "--set" => {
                 let pair = value("--set")?;
                 let (key, val) = pair
@@ -111,6 +116,14 @@ mod tests {
             Command::Serve(serve) => serve,
             Command::Help => panic!("expected Serve"),
         }
+    }
+
+    #[test]
+    fn sim_is_a_shorthand_for_enabling_the_virtual_bench() {
+        assert_eq!(
+            serve(&["--sim"]).overrides,
+            vec![("sim.enabled".to_string(), "true".to_string())]
+        );
     }
 
     #[test]

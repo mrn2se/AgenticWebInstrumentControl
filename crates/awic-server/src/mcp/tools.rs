@@ -28,6 +28,99 @@ pub struct ToolDef {
     pub input_schema: Value,
 }
 
+/// Every tool `state`'s server offers: [`tool_defs`], plus the virtual
+/// bench's when it runs one.
+pub fn tools_for(state: &crate::AppState) -> Vec<ToolDef> {
+    let mut defs = tool_defs();
+    if state.sim().is_some() {
+        defs.extend(sim_tool_defs());
+    }
+    defs
+}
+
+/// The virtual bench's tools (`[sim] enabled`).
+pub fn sim_tool_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "virtual_bench",
+            description: "Describe the virtual bench: a simulated board under test (the \
+                \"AWIC trainer board\") on a virtual USB hub, with virtual instruments clipped \
+                onto its test points. The instruments are ordinary AWIC instruments — use \
+                `list_instruments`, `capture`, `start_recording`, `decode`, `survey_channels`, \
+                `render_view` and the serial tools on them exactly as on hardware; the board's \
+                console is the `serial_source` (115200 8N1), and `power_cycle_usb_port` on the \
+                virtual hub resets it. Returns the board (power, uptime, boots, last reset cause, \
+                test points), U3 — an unmarked chip with keys and a seven-segment display, whose \
+                part number is a puzzle (see `virtual_bench_input`, `virtual_bench_guess`) — each \
+                instrument with the test point each channel is clipped to, and the catalogue of \
+                faults with their symptoms. Some of this can be a secret for you to find out with \
+                the instruments: logic analyzer #1's wiring when shuffled (`test_point` absent), \
+                and which fault is in force during a mystery (`active` absent). Takes no \
+                arguments. Example: {}.",
+            input_schema: object_schema(vec![], vec![]),
+        },
+        ToolDef {
+            name: "virtual_bench_set",
+            description: "Change the virtual bench. `faults` puts exactly these faults in force \
+                (ids from `virtual_bench`, e.g. [\"baud_drift\"]; [] clears them). `mystery: true` \
+                instead puts one random fault in force and keeps it secret — a hunt: find it from \
+                its symptoms with the instruments. `reveal: true` shows the wiring, the faults in \
+                force with their causes, and U3's part number: it ends the puzzles, so only reveal \
+                when the user asks you to. `osc_r2_ohm` (470..100000) turns the 555's timing pot; \
+                the frequency is about 1.44 / ((1 kΩ + 2·R2) · 100 nF). Returns the new status. \
+                Example: {\"mystery\":true}.",
+            input_schema: object_schema(
+                vec![
+                    ("faults", json!({"type":"array","items":{"type":"string"}})),
+                    ("mystery", json!({"type":"boolean"})),
+                    ("reveal", json!({"type":"boolean"})),
+                    (
+                        "osc_r2_ohm",
+                        json!({"type":"number","minimum":470,"maximum":100000}),
+                    ),
+                ],
+                vec![],
+            ),
+        },
+        ToolDef {
+            name: "virtual_bench_input",
+            description: "Operate one of the keys or switches wired to U3, the unmarked chip on \
+                the virtual board. KEY1 and KEY2 are push buttons (pressed for 80 ms, then \
+                released; `presses` repeats, 1..50, about 6 a second); SW1 and SW2 are toggle \
+                switches set to `state` (toggled when omitted). Each drives one U3 pin, as \
+                `virtual_bench` lists. Watch what happens on the seven-segment display \
+                (`counter.display` in `virtual_bench`: the segments lit, a..g) and on U3's \
+                output pins with logic analyzer #2 — record it while you press. Example: \
+                {\"input\":\"KEY1\",\"presses\":3}.",
+            input_schema: object_schema(
+                vec![
+                    (
+                        "input",
+                        json!({"type":"string","enum":["KEY1","KEY2","SW1","SW2"]}),
+                    ),
+                    (
+                        "state",
+                        json!({"type":"boolean","description":"Switches only: on (high) or off"}),
+                    ),
+                    (
+                        "presses",
+                        json!({"type":"integer","minimum":1,"maximum":50}),
+                    ),
+                ],
+                vec!["input"],
+            ),
+        },
+        ToolDef {
+            name: "virtual_bench_guess",
+            description: "Name the part U3 is, once you have worked it out from its pinout and \
+                behaviour (any maker's prefix or suffix is fine). Answers whether you are right; \
+                a right answer shows the part number in `virtual_bench`. Example: \
+                {\"part\":\"74HC4511\"}.",
+            input_schema: object_schema(vec![("part", json!({"type":"string"}))], vec!["part"]),
+        },
+    ]
+}
+
 /// `tools/list`'s payload: every tool this server implements, with a JSON
 /// Schema an MCP client can validate arguments against before ever calling
 /// `tools/call` — and that a human reviewer can read as the spec for what
@@ -922,6 +1015,86 @@ fn strip_identity_calibration(value: &mut Value) {
 
 async fn dispatch(host: &McpHost, name: &str, arguments: Value) -> Result<Value, Value> {
     match name {
+        "virtual_bench" => {
+            let r = host.sim_status().await.map_err(err_to_value)?;
+            Ok(serde_json::to_value(r).unwrap_or_default())
+        }
+        "virtual_bench_set" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                #[serde(default)]
+                faults: Option<Vec<String>>,
+                #[serde(default)]
+                mystery: Option<bool>,
+                #[serde(default)]
+                reveal: Option<bool>,
+                #[serde(default)]
+                osc_r2_ohm: Option<f64>,
+            }
+            let a: Args = parse_args(&arguments)?;
+            let r = host
+                .sim_set(crate::sim::SimChangeRequest {
+                    faults: a.faults,
+                    mystery: a.mystery,
+                    reveal: a.reveal,
+                    osc_r2_ohm: a.osc_r2_ohm,
+                    ..Default::default()
+                })
+                .await
+                .map_err(err_to_value)?;
+            Ok(serde_json::to_value(r).unwrap_or_default())
+        }
+        "virtual_bench_input" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                input: String,
+                #[serde(default)]
+                state: Option<bool>,
+                #[serde(default)]
+                presses: Option<u32>,
+            }
+            let a: Args = parse_args(&arguments)?;
+            let r = host
+                .sim_set(crate::sim::SimChangeRequest {
+                    input: Some(a.input),
+                    state: a.state,
+                    presses: a.presses,
+                    ..Default::default()
+                })
+                .await
+                .map_err(err_to_value)?;
+            Ok(json!({
+                "display": r.counter.display,
+                "inputs": r.counter.inputs,
+                "note": "keys act over the next presses × 160 ms; read the display again \
+                    (virtual_bench) or record U3's pins to see the effect",
+            }))
+        }
+        "virtual_bench_guess" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Args {
+                part: String,
+            }
+            let a: Args = parse_args(&arguments)?;
+            let before = host.sim_status().await.map_err(err_to_value)?;
+            let r = host
+                .sim_set(crate::sim::SimChangeRequest {
+                    guess: Some(a.part.clone()),
+                    ..Default::default()
+                })
+                .await
+                .map_err(err_to_value)?;
+            let correct = r.counter.wrong_guesses == before.counter.wrong_guesses;
+            Ok(json!({
+                "guess": a.part,
+                "correct": correct,
+                "part": r.counter.part,
+                "wrong_guesses": r.counter.wrong_guesses,
+            }))
+        }
         "list_instruments" => {
             let r = host.list_instruments().await.map_err(err_to_value)?;
             Ok(serde_json::to_value(r).unwrap_or_default())
@@ -1634,7 +1807,7 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_valid_object_schema() {
-        for tool in tool_defs() {
+        for tool in tool_defs().into_iter().chain(sim_tool_defs()) {
             assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
             assert!(tool.input_schema["properties"].is_object(), "{}", tool.name);
             assert!(!tool.description.is_empty(), "{}", tool.name);
@@ -1701,7 +1874,8 @@ mod tests {
 
     #[test]
     fn tool_names_are_unique() {
-        let defs = tool_defs();
+        let mut defs = tool_defs();
+        defs.extend(sim_tool_defs());
         let mut names: Vec<&str> = defs.iter().map(|t| t.name).collect();
         names.sort_unstable();
         let mut dedup = names.clone();

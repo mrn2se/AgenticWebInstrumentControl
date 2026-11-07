@@ -329,7 +329,7 @@ async fn respond(state: &AppState, headers: &HeaderMap, value: &Value) -> Reply 
             Some(success(id.unwrap_or(Value::Null), json!({}))),
         ),
         "tools/list" => {
-            let tools: Vec<Value> = tools::tool_defs()
+            let tools: Vec<Value> = tools::tools_for(host.state())
                 .into_iter()
                 .map(|t| {
                     json!({

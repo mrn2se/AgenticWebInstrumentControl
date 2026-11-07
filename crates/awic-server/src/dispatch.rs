@@ -55,6 +55,10 @@ fn terminal_error_response(id: u32, err: TerminalError) -> Response {
 /// server-to-client backpressure policy in `crate::backpressure`).
 const SAMPLE_CHANNEL_CAPACITY: usize = 64;
 
+/// The refusal of `sim.*` on a server without a virtual bench.
+pub const SIM_DISABLED: &str =
+    "this server runs no virtual bench; start it with --sim (or [sim] enabled = true)";
+
 /// `capture.read` / MCP `read_capture` bounds (SPECIFICATION.md §8.3).
 const DEFAULT_READ_CAPTURE_POINTS: u32 = 512;
 const MAX_READ_CAPTURE_POINTS: u32 = 4096;
@@ -361,6 +365,43 @@ pub async fn handle_request_with_origin(
                     dut,
                 }),
             )
+        }
+
+        Request::SimStatus { id, .. } => match state.sim() {
+            Some(bench) => Response::ok(id, ResponseResult::SimStatus(Box::new(bench.status()))),
+            None => Response::err(id, "sim_disabled", SIM_DISABLED),
+        },
+
+        Request::SimSet {
+            id,
+            faults,
+            mystery,
+            reveal,
+            osc_r2_ohm,
+            input,
+            state: input_state,
+            presses,
+            guess,
+            ..
+        } => {
+            let Some(bench) = state.sim() else {
+                return Response::err(id, "sim_disabled", SIM_DISABLED);
+            };
+            let req = crate::sim::SimChangeRequest {
+                faults,
+                mystery,
+                reveal,
+                osc_r2_ohm,
+                input,
+                state: input_state,
+                presses,
+                guess,
+            };
+            tracing::info!(origin, "sim.set {req:?}");
+            match crate::sim::apply(bench, req) {
+                Ok((status, _)) => Response::ok(id, ResponseResult::SimStatus(Box::new(status))),
+                Err(msg) => Response::err(id, "invalid_params", msg),
+            }
         }
 
         Request::UsbLabel {
@@ -1107,7 +1148,7 @@ pub async fn handle_request_with_origin(
                     server_name: "awic".to_string(),
                     server_version: env!("CARGO_PKG_VERSION").to_string(),
                     protocol_version: crate::mcp::protocol::LATEST_PROTOCOL_VERSION.to_string(),
-                    tool_count: crate::mcp::tools::tool_defs().len() as u32,
+                    tool_count: crate::mcp::tools::tools_for(state).len() as u32,
                     max_sessions: crate::mcp::route::MAX_SESSIONS as u32,
                     sessions: state.mcp_monitor().sessions(),
                     logging: state.mcp_monitor().logging(),
