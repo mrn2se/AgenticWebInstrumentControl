@@ -7,7 +7,7 @@ const script = (over: Partial<InstallChoices>): string => buildInstallScript({ .
 
 function allChoices(): InstallChoices[] {
   const out: InstallChoices[] = [];
-  for (const action of ["install", "update"] as const)
+  for (const action of ["install", "update", "demo", "uninstall"] as const)
     for (const run of ["once", "systemd"] as const)
       for (const arch of ["auto", "x86_64", "aarch64", "armv7"] as const)
         for (const prerequisites of [true, false])
@@ -85,5 +85,68 @@ describe("buildInstallScript", () => {
     expect(text).toContain("usermod -aG plugdev");
     expect(text).not.toContain("exec ");
     expect(text).toContain("log out and back in");
+  });
+
+  it("runs a demo as the virtual bench, without sudo, permissions or a service", () => {
+    for (const choices of allChoices().filter((c) => c.action === "demo")) {
+      const text = buildInstallScript(choices);
+      expect(text).toContain("--sim --set backends.native=false");
+      expect(text).toContain("asset=awic-linux-x86_64");
+      expect(text).not.toContain("uname");
+      expect(text).not.toContain("0.0.0.0");
+      expect(text).toContain("cd awic\n");
+      for (const absent of ["sudo", "udev", "usermod", "systemctl", "apt-get", "sigrok-firmware"]) expect(text).not.toContain(absent);
+      expect(text).toContain("exec ");
+    }
+  });
+
+  it("verifies a demo download before running it, only when asked", () => {
+    const text = script({ action: "demo", attestation: true });
+    expect(text.indexOf("gh attestation verify")).toBeLessThan(text.indexOf("chmod +x"));
+    expect(script({ action: "demo" })).not.toContain("gh attestation");
+  });
+
+  it("uninstalls what a hand install put there", () => {
+    const text = script({ action: "uninstall", run: "once", prerequisites: false });
+    expect(text).toContain("echo awic; rm -rI awic;");
+    expect(text).toContain('rm -rI "${XDG_STATE_HOME:-$HOME/.local/state}/awic";');
+    expect(text).not.toContain("sudo");
+    expect(text).not.toContain("curl");
+  });
+
+  it("stops a hand uninstall with an error while AWIC runs, before removing anything", () => {
+    const text = script({ action: "uninstall", run: "once" });
+    const check = text.indexOf("if pgrep '^awic-linux-'");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(text.indexOf("rm -"));
+    expect(text.slice(check)).toMatch(/>&2\n\s*exit 1\nfi/);
+  });
+
+  it("uninstalls the service, its state and its executable", () => {
+    const text = script({ action: "uninstall", run: "systemd", prerequisites: false });
+    expect(text.indexOf("systemctl disable --now awic")).toBeLessThan(text.indexOf("systemctl clean --what=state awic"));
+    expect(text.indexOf("systemctl clean --what=state awic")).toBeLessThan(text.indexOf("rm -i /etc/systemd/system/awic.service"));
+    expect(text).toContain("sudo rm -i /usr/local/bin/awic");
+    expect(text).not.toContain("curl");
+  });
+
+  it("asks before every removal, and skips what is already gone", () => {
+    for (const run of ["once", "systemd"] as const) {
+      const text = script({ action: "uninstall", run, prerequisites: true });
+      expect(text).not.toMatch(/rm -[a-zA-Z]*f/);
+      for (const line of text.split("\n").filter((l) => /\brm /.test(l))) expect(line.trim()).toMatch(/^if \[ -e .+ \]; then (echo .+; )?(sudo )?rm -(rI|i) .+; fi$/);
+    }
+  });
+
+  it("removes the udev rules only when asked, and never the groups or packages", () => {
+    for (const run of ["once", "systemd"] as const) {
+      expect(script({ action: "uninstall", run, prerequisites: true })).toContain("sudo rm -i /etc/udev/rules.d/99-awic.rules");
+      expect(script({ action: "uninstall", run, prerequisites: false })).not.toContain("99-awic.rules");
+      const text = script({ action: "uninstall", run, prerequisites: true });
+      expect(text).not.toContain("apt-get");
+      expect(text).not.toContain("gpasswd");
+      expect(text).not.toContain("usermod");
+      expect(text).toContain('echo "Warning: user groups were not touched.');
+    }
   });
 });

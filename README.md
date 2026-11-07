@@ -100,9 +100,12 @@ locks are kept across restarts in `~/.local/state/awic` (or `$XDG_STATE_HOME/awi
 ### Run it as a service
 
 The [demo page's install assistant](https://mrn2se.github.io/AgenticWebInstrumentControl/) writes the
-commands for your choice of new install or update, by hand or as a systemd service, with or without
-the packages above and attestation checking. The service runs as its own unprivileged user in the
-`plugdev` and `dialout` groups, from `/usr/local/bin/awic`, with its state in `/var/lib/awic`.
+commands for your choice of new install, update or uninstall, by hand or as a systemd service, with
+or without the packages above and attestation checking. Its **Run demo** choice only downloads the
+PC executable into an `awic` folder, as a hand install does, and starts it on the
+[virtual bench](#try-it-without-hardware-the-virtual-bench), with no packages, udev rules, group
+changes or service. The service runs as its own unprivileged user in the `plugdev` and `dialout`
+groups, from `/usr/local/bin/awic`, with its state in `/var/lib/awic`.
 
 ### Verify a download
 

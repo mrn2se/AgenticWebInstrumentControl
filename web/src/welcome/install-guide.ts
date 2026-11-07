@@ -12,13 +12,20 @@ const UDEV_URL = `https://raw.githubusercontent.com/${REPO}/main/tools/udev/99-a
 
 export type InstallArch = "auto" | "x86_64" | "aarch64" | "armv7";
 export type InstallRun = "once" | "systemd";
-export type InstallAction = "install" | "update";
+/**
+ * `demo` runs the virtual bench on a PC: no hardware, no root, no permissions, no service.
+ * `uninstall` removes what a new install of the same kind put there.
+ */
+export type InstallAction = "install" | "update" | "demo" | "uninstall";
 
 export interface InstallChoices {
   readonly action: InstallAction;
   readonly run: InstallRun;
   readonly arch: InstallArch;
-  /** Install the firmware package and the udev rules first. Only a new install needs it. */
+  /**
+   * Install the firmware package and the udev rules first. Only a new install needs it; a demo never
+   * does. For an uninstall: remove the udev rules too.
+   */
   readonly prerequisites: boolean;
   /** Verify the download's GitHub build attestation before using it. */
   readonly attestation: boolean;
@@ -69,7 +76,99 @@ function needsNewLogin(c: InstallChoices): boolean {
   return c.action === "install" && c.prerequisites && c.run === "once";
 }
 
+/**
+ * The demo: download the PC build into its own folder and start the virtual
+ * bench. Only the attestation choice applies; it is kept apart from the real
+ * install so nothing there (sudo, udev, systemd, network) can leak into it.
+ */
+function buildDemoScript(c: InstallChoices): string {
+  const lines: string[] = ["(", "set -eu", ""];
+  lines.push(
+    "# The full AWIC program for a 64-bit PC; the demo is only how it is started below",
+    "asset=awic-linux-x86_64",
+    "mkdir -p awic",
+    "cd awic",
+    `curl -fL -o "$asset.new" "${RELEASE}/$asset"`,
+    "",
+  );
+  if (c.attestation) {
+    lines.push(
+      "# Stop unless GitHub Actions in this repository built exactly this file.",
+      "# Needs the GitHub CLI, signed in (gh auth login).",
+      `gh attestation verify "$asset.new" --repo ${REPO}`,
+      "",
+    );
+  }
+  lines.push(
+    `chmod +x "$asset.new"`,
+    `mv "$asset.new" "$asset"`,
+    "",
+    "# Demo mode: a simulated board and instruments only. No hardware, no root,",
+    "# no USB permissions, nothing left running in the background.",
+  );
+  lines.push(`exec "./$asset" --sim --set backends.native=false`, ")");
+  return lines.join("\n");
+}
+
+/**
+ * Undo a new install: the executable, its state and, if asked, the udev rules. The group
+ * memberships and the packages stay, as other programs use them too.
+ */
+function buildUninstallScript(c: InstallChoices): string {
+  const lines: string[] = ["(", "set -eu", "", "# Every removal asks first; answer y to remove, anything else to keep it.", ""];
+  // rm asks once for a folder (-I) and once for a file (-i). Its folder question does not name the
+  // folder, so the name goes first. Without -f rm fails on a missing path, so each one is checked
+  // first and a second run does not stop halfway.
+  const rm = (path: string, folder: boolean, sudo: boolean): string =>
+    `if [ -e ${path} ]; then ${folder ? `echo ${path}; ` : ""}${sudo ? "sudo " : ""}rm ${folder ? "-rI" : "-i"} ${path}; fi`;
+  if (c.run === "once") {
+    lines.push(
+      "# Stop here if AWIC still runs; run this where the awic folder is.",
+      "if pgrep '^awic-linux-' >/dev/null; then",
+      `  echo "AWIC is still running. Stop it (Ctrl+C in its terminal), then run this again:" >&2`,
+      "  pgrep -a '^awic-linux-' >&2",
+      "  exit 1",
+      "fi",
+      rm("awic", true, false),
+      "",
+      "# Its saved USB port locks",
+      rm(`"\${XDG_STATE_HOME:-$HOME/.local/state}/awic"`, true, false),
+    );
+  } else {
+    lines.push(
+      "# Stop the service and remove it, with its state (saved USB port locks)",
+      "if systemctl cat awic >/dev/null 2>&1; then",
+      "  sudo systemctl disable --now awic",
+      "  sudo systemctl clean --what=state awic",
+      `  ${rm("/etc/systemd/system/awic.service", false, true)}`,
+      "  sudo systemctl daemon-reload",
+      "fi",
+      rm("/usr/local/bin/awic", false, true),
+    );
+  }
+  if (c.prerequisites) {
+    lines.push(
+      "",
+      "# The USB permissions",
+      rm("/etc/udev/rules.d/99-awic.rules", false, true),
+      "sudo udevadm control --reload-rules",
+      "sudo udevadm trigger",
+    );
+  }
+  lines.push(
+    "",
+    "# Left in place, as other programs use them too: the packages sigrok-firmware-fx2lafw",
+    "# and fonts-dejavu-core, and the group memberships:",
+    `echo "Warning: user groups were not touched. A new install started by hand adds its user to" >&2`,
+    `echo "plugdev and dialout; take them out by hand if nothing else needs those groups." >&2`,
+    ")",
+  );
+  return lines.join("\n");
+}
+
 export function buildInstallScript(c: InstallChoices): string {
+  if (c.action === "demo") return buildDemoScript(c);
+  if (c.action === "uninstall") return buildUninstallScript(c);
   const lines: string[] = ["(", "set -eu", ""];
   const prerequisites = c.action === "install" && c.prerequisites;
 
@@ -148,7 +247,15 @@ export function buildInstallScript(c: InstallChoices): string {
 
 /** What to do once the block has run, in one sentence. */
 export function afterInstallNote(c: InstallChoices): string {
+  if (c.action === "uninstall") {
+    return c.run === "systemd"
+      ? "AWIC is gone once the block has run; nothing is left running."
+      : "Run it in the folder that holds the awic folder. AWIC is gone once the block has run.";
+  }
   const where = c.network ? "http://<this machine>:8080/" : "http://127.0.0.1:8080/";
+  if (c.action === "demo") {
+    return `Open http://127.0.0.1:8080/ and the Bench tab while it runs. Stop it with Ctrl+C; delete the awic folder to remove it.`;
+  }
   if (c.run === "systemd") {
     return `AWIC starts with the machine. Open ${where} once it is running. Logs: journalctl -u awic -f`;
   }
