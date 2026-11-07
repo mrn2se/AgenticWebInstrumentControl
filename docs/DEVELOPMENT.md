@@ -45,6 +45,7 @@ awic-proto    wire types; exports TypeScript via ts-rs   (no awic deps)
 awic-core     traits, registry, capture store, event bus, config, soft limits, measurements
 awic-usb      topology tree, hub port power, device watcher (nusb)
 awic-fake     synthetic Backend for tests and the UI without hardware
+awic-sim      virtual bench (`--sim`): a simulated board with virtual instruments on its test points
 awic-native   FX2 firmware upload, fx2lafw and fx2scope drivers
 awic-record   live recorder: runs, compressed blocks, summary tree       (pure)
 awic-pattern  pattern language, search and incremental matching          (pure)

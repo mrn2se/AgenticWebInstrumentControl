@@ -168,9 +168,29 @@ client drives it with no AWIC-specific code; `make visa` runs 53 pyvisa checks a
 ([tools/visa](../tools/visa/README.md)). `SYST:COMM:ERR:INL ON` turns a failed query into a
 readable answer instead of a client timeout.
 
+## Virtual bench
+
+`awic --sim` (`[sim] enabled`) runs a simulated board under test with virtual instruments on its
+test points, for trying AWIC, and for demos, with no hardware (crate `awic-sim`).
+
+- A virtual hub (bus 254) whose ports power the board, two 8-channel logic analyzers and a
+  2-channel scope; switching a port off drops its device off the bus, exactly as hardware does.
+- The board's firmware is simulated event by event: a 115200 8N1 console with a shell, a TMP102
+  read over I²C every 500 ms, SPI flash reads, a heartbeat LED, a status line every 2 s, a boot
+  banner with the reset cause. A 555 astable with an adjustable pot. U3, an unmarked CD4026B with
+  keys and a seven-segment display, as a puzzle.
+- The instruments sample real waveforms in real time: AWIC's own UART, I²C and SPI decoders and
+  the channel survey read them, typed console input shows up on the RX line, short pulses through
+  the 555's output slew become runts on the scope.
+- The board's USB-UART is a `serial` terminal source that waits while the board is unpowered and
+  resumes with the boot banner.
+- Eight faults to inject, or one at random as a secret *mystery*; logic analyzer #1 wired at
+  random. A seed reproduces a run.
+- Web UI **Bench** tab (shown only when the bench runs) and four MCP tools.
+
 ## Web UI (M2–M15)
 
-- Vanilla TypeScript and web components, no framework. Tabs: USB, Graph, Terminal, MCP.
+- Vanilla TypeScript and web components, no framework. Tabs: USB, Graph, Terminal, MCP, and Bench with the virtual bench.
 - Clicking **AWIC** in the header opens an About dialog: what AWIC is, a link to the project on
   GitHub, and GitHub Discussions as the place for questions, ideas and problems.
 - Graph: capability-driven controls, Single and Live modes, cursors, measurements, decode panel,

@@ -128,6 +128,32 @@ AWIC_AUTH__TOKEN=secret ./awic-linux-x86_64 --bind 0.0.0.0:8080
 The server binds `127.0.0.1:8080` by default, reachable from this machine only. Read
 [Security](#security) before binding it to anything else.
 
+## Try it without hardware: the virtual bench
+
+```sh
+./awic-linux-x86_64 --sim
+```
+
+`--sim` (or `[sim] enabled = true`) adds a simulated bench next to any real instruments, all on a
+virtual USB hub (bus 254) so nothing virtual is mistaken for hardware:
+
+- **The AWIC trainer board**: an MCU with a serial console you can type into (`help`, `temp`,
+  `i2c scan`, `reboot`, `crash`, ...), a TMP102 sensor it polls over I²C, a SPI flash, a heartbeat
+  LED, and a 555 timer with a pot. Only its test points are reachable.
+- **U3**: an unmarked chip with two keys, two switches and a seven-segment display. Work out which
+  part it is from its pinout and behaviour, then check your answer.
+- **Two logic analyzers and a scope** clipped onto the test points. They are ordinary AWIC
+  instruments: capture, record, decode, survey and render them as you would real ones. Logic
+  analyzer #1's probes go on in a random order, for you to sort out.
+- **Faults to hunt**: a glitch on the I²C clock, a sensor that drops off the bus, a console that
+  garbles as the MCU's clock drifts, chip-select bounce, watchdog resets, runt pulses, jitter, a
+  bouncing key. Pick them, or start a *mystery* — one at random, kept secret until revealed.
+
+The web UI's **Bench** tab shows the board, its test points, the keys and display, and the faults.
+An agent gets the same through the MCP tools `virtual_bench`, `virtual_bench_set`,
+`virtual_bench_input` and `virtual_bench_guess`. `--set sim.seed=N` repeats a run;
+`--set sim.faults='["mystery"]'` starts with a hunt.
+
 ## Using AWIC from an AI agent
 
 AWIC exposes an [MCP](https://modelcontextprotocol.io) server alongside the web UI and the SCPI
