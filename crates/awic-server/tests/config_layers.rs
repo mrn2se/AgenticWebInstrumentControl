@@ -21,12 +21,40 @@ use tokio::process::{Child, Command};
 use tokio::time::timeout;
 
 /// An ephemeral port, released for the server to bind (see `mcp_stdio.rs`).
+/// Only for ports the server is meant to listen on; see [`reserved_port`]
+/// for the others.
 fn free_port() -> u16 {
     StdTcpListener::bind("127.0.0.1:0")
         .expect("bind ephemeral port")
         .local_addr()
         .expect("local addr")
         .port()
+}
+
+/// A port held for the whole test by a socket that is bound but not
+/// listening: connecting to it is refused, and nothing else can bind it.
+///
+/// For the ports a test checks the server does *not* use. A port from
+/// [`free_port`] is free again the moment it is returned, so a server another
+/// test starts in parallel could take it, and "not connectable" then failed
+/// for a reason that had nothing to do with this test (seen in CI). Should
+/// the server under test wrongly pick a reserved port, it cannot bind it and
+/// never comes up, so the test still fails.
+struct ReservedPort {
+    _socket: tokio::net::TcpSocket,
+    port: u16,
+}
+
+fn reserved_port() -> ReservedPort {
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket
+        .bind("127.0.0.1:0".parse().unwrap())
+        .expect("bind ephemeral port");
+    let port = socket.local_addr().expect("local addr").port();
+    ReservedPort {
+        _socket: socket,
+        port,
+    }
 }
 
 async fn connectable(port: u16) -> bool {
@@ -124,12 +152,12 @@ async fn run_to_exit(mut cmd: Command) -> (i32, String) {
 #[tokio::test]
 async fn arguments_override_the_environment_which_overrides_the_file() {
     let bench = Bench::new();
-    let (file_port, env_port, arg_port) = (free_port(), free_port(), free_port());
-    let (file_scpi, env_scpi) = (free_port(), free_port());
-    let config = bench.config(file_port, file_scpi);
+    let (file_port, env_port, file_scpi) = (reserved_port(), reserved_port(), reserved_port());
+    let (arg_port, env_scpi) = (free_port(), free_port());
+    let config = bench.config(file_port.port, file_scpi.port);
 
     let mut cmd = bench.awic();
-    cmd.env("AWIC_SERVER__BIND", format!("127.0.0.1:{env_port}"))
+    cmd.env("AWIC_SERVER__BIND", format!("127.0.0.1:{}", env_port.port))
         .env("AWIC_SERVER__SCPI_PORT", env_scpi.to_string())
         .args(["--config", config.to_str().unwrap()])
         .args(["--bind", &format!("127.0.0.1:{arg_port}")]);
@@ -140,15 +168,15 @@ async fn arguments_override_the_environment_which_overrides_the_file() {
     wait_until_connectable(arg_port).await;
     wait_until_connectable(env_scpi).await;
     assert!(
-        !connectable(env_port).await,
+        !connectable(env_port.port).await,
         "env bind should be overridden"
     );
     assert!(
-        !connectable(file_port).await,
+        !connectable(file_port.port).await,
         "file bind should be overridden"
     );
     assert!(
-        !connectable(file_scpi).await,
+        !connectable(file_scpi.port).await,
         "file scpi_port should be overridden"
     );
 }
@@ -156,20 +184,24 @@ async fn arguments_override_the_environment_which_overrides_the_file() {
 #[tokio::test]
 async fn set_overrides_any_setting_and_the_last_one_wins() {
     let bench = Bench::new();
-    let (file_port, scpi_port, first, last) = (free_port(), free_port(), free_port(), free_port());
-    let config = bench.config(file_port, free_port());
+    let (file_port, file_scpi, first) = (reserved_port(), reserved_port(), reserved_port());
+    let (scpi_port, last) = (free_port(), free_port());
+    let config = bench.config(file_port.port, file_scpi.port);
 
     let mut cmd = bench.awic();
     cmd.args(["-c", config.to_str().unwrap()])
         .args(["--set", &format!("server.scpi_port={scpi_port}")])
-        .args(["-s", &format!("server.bind=127.0.0.1:{first}")])
+        .args(["-s", &format!("server.bind=127.0.0.1:{}", first.port)])
         .arg(format!("--set=server.bind=127.0.0.1:{last}"));
     let _server = ChildGuard(cmd.spawn().expect("spawn awic"));
 
     wait_until_connectable(last).await;
     wait_until_connectable(scpi_port).await;
-    assert!(!connectable(first).await, "an earlier --set should lose");
-    assert!(!connectable(file_port).await);
+    assert!(
+        !connectable(first.port).await,
+        "an earlier --set should lose"
+    );
+    assert!(!connectable(file_port.port).await);
 }
 
 /// Before this change, environment overrides were dropped whenever the
