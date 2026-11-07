@@ -13,9 +13,18 @@ search, rendered views, MCP, SCPI and the terminal all work on hardware; a PSU m
 planned. Details in [docs/FEATURES.md](docs/FEATURES.md).
 License: [MPL-2.0](LICENSE) — no GPL dependency.
 
-**[Try the interactive demo](https://mrn2se.github.io/AgenticWebInstrumentControl/)**: the real web
-UI on a simulated bench, in your browser, with no hardware. The same page gives you the install
-commands for your setup.
+## Try it first, no hardware needed
+
+- **[Web demo](https://mrn2se.github.io/AgenticWebInstrumentControl/)**: the real web UI on a
+  simulated bench, in your browser, with a scripted AI-agent session to watch. Nothing to install;
+  the same page gives you the install commands for your setup.
+- **Virtual bench**: `awic --sim` runs the real server with a simulated board under test and virtual
+  instruments clipped onto its test points: a console you can type into, a sensor bus, a 555 timer,
+  an unmarked chip to identify, and faults to hunt down. Connect your own AI agent to it over MCP.
+- **[Example reports](example-report/README.md)**: what an agent and a person found with AWIC on a
+  real bench.
+
+All three are explained in **[docs/DEMOS.md](docs/DEMOS.md)**.
 
 ## Hardware
 
@@ -127,6 +136,19 @@ AWIC_AUTH__TOKEN=secret ./awic-linux-x86_64 --bind 0.0.0.0:8080
 
 The server binds `127.0.0.1:8080` by default, reachable from this machine only. Read
 [Security](#security) before binding it to anything else.
+
+## Try it without hardware: the virtual bench
+
+```sh
+./awic-linux-x86_64 --sim --set backends.native=false
+```
+
+Then open <http://127.0.0.1:8080/> and the **Bench** tab. The virtual bench is a simulated trainer
+board with two logic analyzers and a scope clipped onto its test points, on a virtual USB hub
+(bus 254) so nothing virtual is mistaken for hardware. Type into its console, find out how the
+shuffled analyzer is wired, identify the unmarked chip U3, or hunt a fault. Leave
+`backends.native` on to have it next to your real instruments. What is on it, what to try and how
+to point an AI agent at it: [docs/DEMOS.md](docs/DEMOS.md#2-the-virtual-bench).
 
 ## Using AWIC from an AI agent
 

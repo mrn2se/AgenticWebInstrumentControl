@@ -15,8 +15,8 @@ use crate::recorder::{
 use crate::{
     CaptureDecodeResult, ChannelMapping, DecodeFormat, DecodeListResult, DecodeOpenSpec, DecoderId,
     IntervalKind, McpImageResult, McpLogResult, McpLoggingState, McpStatusResult, OptionSetting,
-    RecDecodeResult, RenderKind, RenderResult, SerialSettings, SurveyResult, TerminalKind,
-    TerminalSourceInfo, TerminalState,
+    RecDecodeResult, RenderKind, RenderResult, SerialSettings, SimStatus, SurveyResult,
+    TerminalKind, TerminalSourceInfo, TerminalState,
 };
 
 /// Protocol version. Bumped on a breaking wire change.
@@ -471,6 +471,42 @@ pub enum Request {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         clear: Option<bool>,
     },
+
+    /// The virtual bench (`[sim] enabled`): the board, its test points, the
+    /// instruments clipped onto them and the faults on offer. Refused with
+    /// `sim_disabled` on a server without one.
+    #[serde(rename = "sim.status")]
+    SimStatus { v: u8, id: u32 },
+
+    /// Changes the virtual bench and answers with its new status. Omitted
+    /// fields are left as they are. `faults` replaces the faults in force
+    /// (ids from `sim.status`); `mystery: true` instead puts one random,
+    /// secret fault in force; `reveal: true` shows the wiring and the
+    /// faults; `osc_r2_ohm` turns the 555's timing pot. `input` operates
+    /// one of U3's keys or switches: a key is pressed `presses` times
+    /// (default 1), a switch is set to `state` (toggled when omitted).
+    /// `guess` names the part U3 is; right, it is revealed.
+    #[serde(rename = "sim.set")]
+    SimSet {
+        v: u8,
+        id: u32,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        input: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        state: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        presses: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        guess: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        faults: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        mystery: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        reveal: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        osc_r2_ohm: Option<f64>,
+    },
 }
 
 impl Request {
@@ -510,7 +546,9 @@ impl Request {
             | Request::McpStatus { id, .. }
             | Request::McpLog { id, .. }
             | Request::McpImage { id, .. }
-            | Request::McpLogging { id, .. } => *id,
+            | Request::McpLogging { id, .. }
+            | Request::SimStatus { id, .. }
+            | Request::SimSet { id, .. } => *id,
         }
     }
 }
@@ -614,6 +652,8 @@ pub enum ResponseResult {
     McpLog(McpLogResult),
     McpImage(McpImageResult),
     McpLogging(McpLoggingState),
+    /// Boxed: far larger than every other result.
+    SimStatus(Box<SimStatus>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -989,6 +1029,11 @@ pub enum Event {
         seq: u32,
         sessions_changed: bool,
     },
+
+    /// The virtual bench changed (a fault, the pot, a reveal, the board
+    /// starting). Carries nothing: clients re-fetch `sim.status`.
+    #[serde(rename = "sim.changed")]
+    SimChanged { v: u8 },
 }
 
 /// What happened to a device on the bus.

@@ -25,6 +25,7 @@ pub mod origin;
 pub mod recorder;
 pub mod render;
 pub mod scpi;
+pub mod sim;
 pub mod soft_trigger;
 pub mod state;
 pub mod stream;

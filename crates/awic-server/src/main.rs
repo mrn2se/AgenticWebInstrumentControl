@@ -43,10 +43,40 @@ async fn main() -> anyhow::Result<()> {
     let bind = config.server.bind.clone();
     let scpi_bind = scpi_bind_addr(&bind, config.server.scpi_port);
 
-    let usb = Arc::new(RealUsbController::new(std::path::Path::new(
-        &config.server.state_dir,
-    )));
-    let backend = Arc::new(CompositeBackend::new(instrument_backends(&config)));
+    // The virtual bench (`--sim`): a simulated board whose instruments,
+    // hub and console join the real ones.
+    let sim = if config.sim.enabled {
+        let bench = awic_sim::SimBench::new(&awic_sim::SimSettings {
+            seed: config.sim.seed,
+            faults: config.sim.faults.clone(),
+            shuffle: config.sim.shuffle,
+        })
+        .map_err(|msg| anyhow::anyhow!("[sim] {msg}"))?;
+        tracing::info!(
+            seed = bench.seed(),
+            hub = %awic_sim::SimBench::hub_id(),
+            "virtual bench enabled"
+        );
+        Some(bench)
+    } else {
+        None
+    };
+
+    let real_usb: Arc<dyn awic_server::usb::UsbController> = Arc::new(RealUsbController::new(
+        std::path::Path::new(&config.server.state_dir),
+    ));
+    let usb: Arc<dyn awic_server::usb::UsbController> = match &sim {
+        Some(bench) => Arc::new(awic_server::sim::SimUsbController::new(
+            real_usb,
+            bench.clone(),
+        )),
+        None => real_usb,
+    };
+    let mut backends = instrument_backends(&config);
+    if let Some(bench) = &sim {
+        backends.push(Arc::new(awic_sim::SimBackend::new(bench.clone())));
+    }
+    let backend = Arc::new(CompositeBackend::new(backends));
     let watcher_mode = config.watcher.mode;
     let serial_provider = Arc::new(SerialSourceProvider::new(
         config.serial.sysfs_root.clone(),
@@ -57,12 +87,25 @@ async fn main() -> anyhow::Result<()> {
     // cell exists and when it's safe to assume filled.
     let late_state: awic_server::scpi::terminal_source::LateAppState = Arc::new(OnceLock::new());
     let scpi_terminal_provider = Arc::new(ScpiTerminalSource::new(late_state.clone()));
-    let terminal_providers: Vec<Arc<dyn TerminalSourceProvider>> = vec![
+    let mut terminal_providers: Vec<Arc<dyn TerminalSourceProvider>> = vec![
         Arc::new(log_source),
         serial_provider,
         scpi_terminal_provider,
     ];
+    if let Some(bench) = &sim {
+        terminal_providers.push(Arc::new(awic_server::sim::SimSerialProvider::new(
+            bench.clone(),
+        )));
+    }
     let state = AppState::with_terminal_providers(config, backend, usb, terminal_providers);
+    if let Some(bench) = sim {
+        let _ticker = bench.spawn_ticker();
+        let _forward = tokio::spawn(awic_server::sim::forward_changes(
+            bench.clone(),
+            state.event_bus().clone(),
+        ));
+        state.set_sim(bench);
+    }
     late_state
         .set(state.clone())
         .unwrap_or_else(|_| unreachable!("late_state is set exactly once, right here"));
@@ -171,7 +214,7 @@ fn instrument_backends(config: &Config) -> Vec<Arc<dyn Backend>> {
     if config.backends.fake {
         backends.push(Arc::new(FakeBackend::new()));
     }
-    if backends.is_empty() {
+    if backends.is_empty() && !config.sim.enabled {
         tracing::warn!("no instrument backends enabled in [backends]; no instruments will appear");
     }
     let names: Vec<&str> = backends.iter().map(|b| b.name()).collect();

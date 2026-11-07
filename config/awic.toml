@@ -111,6 +111,28 @@ native = true
 fake = false
 
 # ==============================================================================
+# Virtual Bench (try AWIC without hardware)
+# ==============================================================================
+[sim]
+# A simulated board under test with virtual instruments clipped onto its test
+# points, all on a virtual USB hub (bus 254): an MCU with a serial console you
+# can type into, an I2C sensor and SPI flash it polls, a 555 timer, and an
+# unmarked counter chip with keys and a seven-segment display to identify.
+# Two logic analyzers, a scope and the board's USB-UART appear next to any real
+# instruments. Off by default; `awic --sim` is a shorthand for enabled = true.
+enabled = false
+# Seeds every random choice (wiring, fault timing). 0 = a new one each start;
+# the one in use is shown in the web UI's Bench tab and in the server log.
+seed = 0
+# Faults in force at start: any of clock_glitch, i2c_nack, baud_drift,
+# spi_cs_glitch, watchdog_reset, runt_pulse, osc_jitter, key_bounce — or
+# ["mystery"] for one random fault, kept secret until revealed.
+faults = []
+# Clip logic analyzer #1's probes onto the board's test points in a random
+# order, for you (or an agent) to work out which channel is which.
+shuffle = true
+
+# ==============================================================================
 # Graph Renderer (Visualization Backend)
 # ==============================================================================
 [renderer]

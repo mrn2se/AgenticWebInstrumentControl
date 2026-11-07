@@ -5,6 +5,7 @@ members = [
     "crates/awic-core",
     "crates/awic-usb",
     "crates/awic-fake",
+    "crates/awic-sim",
     "crates/awic-server",
     "crates/awic-native",
     "crates/awic-record",
@@ -24,6 +25,7 @@ awic-proto = { path = "crates/awic-proto" }
 awic-core = { path = "crates/awic-core" }
 awic-usb = { path = "crates/awic-usb" }
 awic-fake = { path = "crates/awic-fake" }
+awic-sim = { path = "crates/awic-sim" }
 awic-native = { path = "crates/awic-native" }
 awic-record = { path = "crates/awic-record" }
 awic-decode = { path = "crates/awic-decode" }

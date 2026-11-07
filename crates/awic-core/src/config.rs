@@ -36,6 +36,7 @@ pub struct Config {
     pub recorder: RecorderConfig,
     pub serial: SerialConfig,
     pub mcp: McpConfig,
+    pub sim: SimConfig,
     /// The removed `[usb]` section, captured only so it can be refused — see
     /// [`Config::reject_removed_sections`].
     #[serde(default, skip_serializing)]
@@ -321,6 +322,31 @@ impl Default for McpConfig {
             log: true,
             log_images: true,
             log_memory_mb: 16,
+        }
+    }
+}
+
+/// `[sim]`: the virtual bench — a simulated board with virtual instruments
+/// on its test points, for trying AWIC with no hardware (`awic-sim`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SimConfig {
+    pub enabled: bool,
+    /// 0 = pick a new one at each start.
+    pub seed: u64,
+    /// Fault ids in force at start, or `["mystery"]`.
+    pub faults: Vec<String>,
+    /// Wire logic analyzer #1 onto the test points in a random order.
+    pub shuffle: bool,
+}
+
+impl Default for SimConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            seed: 0,
+            faults: Vec::new(),
+            shuffle: true,
         }
     }
 }

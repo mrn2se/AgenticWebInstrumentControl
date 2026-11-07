@@ -29,6 +29,8 @@ import type {
   McpLogResult,
   McpImageResult,
   McpLoggingState,
+  SimStatus,
+  UsbCycleResult,
 } from "../proto/types";
 import { Emitter } from "./emitter";
 import { type SocketLike, wrapNativeWebSocket } from "./socket";
@@ -55,6 +57,7 @@ export interface ResultForOp {
   "usb.tree": UsbTreeResult;
   "usb.power": UsbPowerResult;
   "usb.protect": UsbProtectResult;
+  "usb.cycle": UsbCycleResult;
   "acq.configure": AcqConfigureResult;
   "acq.start": AcqStartResult;
   "acq.stop": AcqStopResult;
@@ -80,6 +83,8 @@ export interface ResultForOp {
   "mcp.log": McpLogResult;
   "mcp.image": McpImageResult;
   "mcp.logging": McpLoggingState;
+  "sim.status": SimStatus;
+  "sim.set": SimStatus;
 }
 
 export type RequestOp = keyof ResultForOp;

@@ -149,6 +149,34 @@ export class AppShell extends HTMLElement {
 
     const first = listModules()[0];
     if (first) this.activateTab(first.id);
+
+    // Tabs that only some servers have a use for ask on every connect.
+    this.unsubscribers.push(
+      ctx.ws.connectionState.on((state) => {
+        if (state === "connected") this.probeAvailability(ctx);
+      }),
+    );
+    this.probeAvailability(ctx);
+  }
+
+  private probeAvailability(ctx: ModuleContext): void {
+    for (const descriptor of listModules()) {
+      const available = descriptor.available;
+      if (!available) continue;
+      available(ctx).then(
+        (yes) => this.setTabVisible(descriptor.id, yes),
+        () => this.setTabVisible(descriptor.id, false),
+      );
+    }
+  }
+
+  private setTabVisible(id: string, visible: boolean): void {
+    const button = this.tabsEl.querySelector<HTMLButtonElement>(`button[data-module-id="${id}"]`);
+    if (button) button.hidden = !visible;
+    if (!visible && this.activeId === id) {
+      const first = listModules().find((m) => !m.available);
+      if (first) this.activateTab(first.id);
+    }
   }
 
   disconnectedCallback(): void {
@@ -171,6 +199,8 @@ export class AppShell extends HTMLElement {
       button.className = `${TAB_BASE} ${TAB_INACTIVE}`;
       button.textContent = descriptor.title;
       button.dataset.moduleId = descriptor.id;
+      // Hidden until the server says it has a use for it.
+      if (descriptor.available) button.hidden = true;
       button.addEventListener("click", () => this.activateTab(descriptor.id));
       this.tabsEl.appendChild(button);
     }

@@ -115,11 +115,12 @@ export function applyServerEvent(state: AppState, event: ServerEvent): AppState 
     case "term.state":
     case "term.sources":
     case "mcp.activity":
+    case "sim.changed":
       // The terminal module owns its own session/source view model and
       // subscribes to `ctx.ws.events` directly (same shape as `usb.changed`
       // above) rather than through this shared store — there is no global
       // state here for either event to update. The MCP tab does the same
-      // with `mcp.activity`.
+      // with `mcp.activity`, and the Bench tab with `sim.changed`.
       return state;
 
     default: {
