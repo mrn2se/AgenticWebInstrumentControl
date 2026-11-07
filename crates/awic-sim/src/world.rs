@@ -335,6 +335,9 @@ impl Input {
 
 /// The virtual USB-UART adapter on the board: reads TX, drives RX.
 struct Adapter {
+    /// Which `uart_open` this is, so a late close of an earlier one
+    /// cannot shut it.
+    generation: u64,
     fmt: UartFormat,
     rx: UartReceiver,
     tx_free: Ns,
@@ -573,17 +576,29 @@ impl World {
 
     /// Connects the USB-UART adapter at `fmt`. Bytes sent before this are
     /// not seen, as with a real port opened late.
-    pub fn uart_open(&mut self, t: Ns, fmt: UartFormat) {
+    /// Returns the handle [`Self::uart_close`] takes.
+    pub fn uart_open(&mut self, t: Ns, fmt: UartFormat) -> u64 {
         self.advance_to(t);
+        let generation = self.adapter.as_ref().map_or(0, |a| a.generation) + 1;
         self.adapter = Some(Adapter {
+            generation,
             fmt,
             rx: UartReceiver::new(fmt, t),
             tx_free: t,
         });
+        generation
     }
 
-    pub fn uart_close(&mut self) {
-        self.adapter = None;
+    /// Disconnects the adapter if it is still the one `generation` opened:
+    /// a session torn down after a newer one opened leaves the newer alone.
+    pub fn uart_close(&mut self, generation: u64) {
+        if self
+            .adapter
+            .as_ref()
+            .is_some_and(|a| a.generation == generation)
+        {
+            self.adapter = None;
+        }
     }
 
     /// What the adapter has received from the MCU up to `t`.
@@ -1399,6 +1414,20 @@ mod tests {
         let text = String::from_utf8_lossy(&d);
         assert!(text.contains("reset cause: power-on"), "{text:?}");
         assert_eq!(world.boots(), 2);
+    }
+
+    #[test]
+    fn a_late_close_of_an_old_session_leaves_the_new_one_open() {
+        let mut world = World::new(1, FaultSet::default());
+        let old = world.uart_open(10 * MS, UartFormat::new_8n1(CONSOLE_BAUD));
+        let new = world.uart_open(20 * MS, UartFormat::new_8n1(CONSOLE_BAUD));
+        world.uart_close(old);
+        assert!(
+            world.uart_write(30 * MS, b"\r"),
+            "the newer adapter was closed"
+        );
+        world.uart_close(new);
+        assert!(!world.uart_write(40 * MS, b"\r"));
     }
 
     #[test]

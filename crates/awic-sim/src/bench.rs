@@ -553,18 +553,19 @@ impl SimBench {
     // ---- the board's USB-UART ---------------------------------------------
 
     /// Opens the board's USB-UART at the given frame format.
-    pub fn uart_open(&self, baud: u32, data_bits: u8, parity: Parity, stop_bits: u8) {
+    /// Returns the handle [`Self::uart_close`] takes.
+    pub fn uart_open(&self, baud: u32, data_bits: u8, parity: Parity, stop_bits: u8) -> u64 {
         let fmt = UartFormat {
             bit_ns: 1e9 / f64::from(baud.max(1)),
             data_bits: data_bits.clamp(5, 8),
             parity,
             stop_bits: stop_bits.clamp(1, 2),
         };
-        self.with_world(|w, now| w.uart_open(now, fmt));
+        self.with_world(|w, now| w.uart_open(now, fmt))
     }
 
-    pub fn uart_close(&self) {
-        self.with_world(|w, _| w.uart_close());
+    pub fn uart_close(&self, generation: u64) {
+        self.with_world(|w, _| w.uart_close(generation));
     }
 
     pub fn uart_read(&self) -> UartRead {

@@ -86,11 +86,13 @@ impl TerminalSourceProvider for SimSerialProvider {
             StopBits::One => 1,
             StopBits::Two => 2,
         };
-        self.bench
+        let generation = self
+            .bench
             .uart_open(serial.baud, serial.data_bits, parity, stop_bits);
         Ok(Connected {
             connection: Box::new(SimSerialConnection {
                 bench: self.bench.clone(),
+                generation,
                 waiting: false,
                 pending: None,
             }),
@@ -102,6 +104,8 @@ impl TerminalSourceProvider for SimSerialProvider {
 
 struct SimSerialConnection {
     bench: SimBench,
+    /// The adapter this connection opened (see `World::uart_close`).
+    generation: u64,
     waiting: bool,
     /// Bytes read in the same poll that found the board back, delivered
     /// right after `Resumed`.
@@ -150,7 +154,7 @@ impl SourceConnection for SimSerialConnection {
 
 impl Drop for SimSerialConnection {
     fn drop(&mut self) {
-        self.bench.uart_close();
+        self.bench.uart_close(self.generation);
     }
 }
 
