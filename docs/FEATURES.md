@@ -186,7 +186,8 @@ test points, for trying AWIC, and for demos, with no hardware (crate `awic-sim`)
   resumes with the boot banner.
 - Eight faults to inject, or one at random as a secret *mystery*; logic analyzer #1 wired at
   random. A seed reproduces a run.
-- Web UI **Bench** tab (shown only when the bench runs) and four MCP tools.
+- Web UI **Bench** tab (shown only when the bench runs) and four MCP tools. How to use it, and the
+  other demos: [DEMOS.md](DEMOS.md).
 
 ## Web UI (M2–M15)
 

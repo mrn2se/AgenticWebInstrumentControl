@@ -13,9 +13,18 @@ search, rendered views, MCP, SCPI and the terminal all work on hardware; a PSU m
 planned. Details in [docs/FEATURES.md](docs/FEATURES.md).
 License: [MPL-2.0](LICENSE) — no GPL dependency.
 
-**[Try the interactive demo](https://mrn2se.github.io/AgenticWebInstrumentControl/)**: the real web
-UI on a simulated bench, in your browser, with no hardware. The same page gives you the install
-commands for your setup.
+## Try it first, no hardware needed
+
+- **[Web demo](https://mrn2se.github.io/AgenticWebInstrumentControl/)**: the real web UI on a
+  simulated bench, in your browser, with a scripted AI-agent session to watch. Nothing to install;
+  the same page gives you the install commands for your setup.
+- **Virtual bench**: `awic --sim` runs the real server with a simulated board under test and virtual
+  instruments clipped onto its test points: a console you can type into, a sensor bus, a 555 timer,
+  an unmarked chip to identify, and faults to hunt down. Connect your own AI agent to it over MCP.
+- **[Example reports](example-report/README.md)**: what an agent and a person found with AWIC on a
+  real bench.
+
+All three are explained in **[docs/DEMOS.md](docs/DEMOS.md)**.
 
 ## Hardware
 
@@ -131,28 +140,15 @@ The server binds `127.0.0.1:8080` by default, reachable from this machine only. 
 ## Try it without hardware: the virtual bench
 
 ```sh
-./awic-linux-x86_64 --sim
+./awic-linux-x86_64 --sim --set backends.native=false
 ```
 
-`--sim` (or `[sim] enabled = true`) adds a simulated bench next to any real instruments, all on a
-virtual USB hub (bus 254) so nothing virtual is mistaken for hardware:
-
-- **The AWIC trainer board**: an MCU with a serial console you can type into (`help`, `temp`,
-  `i2c scan`, `reboot`, `crash`, ...), a TMP102 sensor it polls over I²C, a SPI flash, a heartbeat
-  LED, and a 555 timer with a pot. Only its test points are reachable.
-- **U3**: an unmarked chip with two keys, two switches and a seven-segment display. Work out which
-  part it is from its pinout and behaviour, then check your answer.
-- **Two logic analyzers and a scope** clipped onto the test points. They are ordinary AWIC
-  instruments: capture, record, decode, survey and render them as you would real ones. Logic
-  analyzer #1's probes go on in a random order, for you to sort out.
-- **Faults to hunt**: a glitch on the I²C clock, a sensor that drops off the bus, a console that
-  garbles as the MCU's clock drifts, chip-select bounce, watchdog resets, runt pulses, jitter, a
-  bouncing key. Pick them, or start a *mystery* — one at random, kept secret until revealed.
-
-The web UI's **Bench** tab shows the board, its test points, the keys and display, and the faults.
-An agent gets the same through the MCP tools `virtual_bench`, `virtual_bench_set`,
-`virtual_bench_input` and `virtual_bench_guess`. `--set sim.seed=N` repeats a run;
-`--set sim.faults='["mystery"]'` starts with a hunt.
+Then open <http://127.0.0.1:8080/> and the **Bench** tab. The virtual bench is a simulated trainer
+board with two logic analyzers and a scope clipped onto its test points, on a virtual USB hub
+(bus 254) so nothing virtual is mistaken for hardware. Type into its console, find out how the
+shuffled analyzer is wired, identify the unmarked chip U3, or hunt a fault. Leave
+`backends.native` on to have it next to your real instruments. What is on it, what to try and how
+to point an AI agent at it: [docs/DEMOS.md](docs/DEMOS.md#2-the-virtual-bench).
 
 ## Using AWIC from an AI agent
 
