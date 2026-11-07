@@ -144,7 +144,6 @@ class TerminalModule extends AwicModule {
   private lastSources: readonly TerminalSourceInfo[] = [];
 
   private unsubEvents: (() => void) | null = null;
-  private unsubTermFrames: (() => void) | null = null;
   private unsubTheme: (() => void) | null = null;
   private unsubConnection: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -252,23 +251,28 @@ class TerminalModule extends AwicModule {
     this.levelFilterSelect.addEventListener("change", () => this.handleLevelFilterChange());
 
     this.unsubTheme = this.ctx.theme.changes.on(() => this.applyThemeToAllPanes());
+
+    // A session's output and state changes arrive whichever tab is shown:
+    // listening only while this tab was active dropped everything a board
+    // printed meanwhile — a boot banner after a power cycle started from
+    // another tab never reached the pane.
+    this.ctx.ws.events.on((event) => {
+      if (event.event !== "term.state") return;
+      this.sessions = applySessionState(this.sessions, event.session, event.state);
+      this.renderTabs();
+      this.panes
+        .get(event.session)
+        ?.term.write(
+          `\r\n\x1b[90m[session ${stateBadge(event.state)}${event.msg ? `: ${event.msg}` : ""}]\x1b[0m\r\n`,
+        );
+    });
+    this.ctx.ws.termFrames.on((frame) => this.handleTermFrame(frame));
   }
 
   override activate(): void {
     this.unsubEvents = this.ctx.ws.events.on((event) => {
-      if (event.event === "term.sources") {
-        this.refreshSources();
-      } else if (event.event === "term.state") {
-        this.sessions = applySessionState(this.sessions, event.session, event.state);
-        this.renderTabs();
-        this.panes
-          .get(event.session)
-          ?.term.write(
-            `\r\n\x1b[90m[session ${stateBadge(event.state)}${event.msg ? `: ${event.msg}` : ""}]\x1b[0m\r\n`,
-          );
-      }
+      if (event.event === "term.sources") this.refreshSources();
     });
-    this.unsubTermFrames = this.ctx.ws.termFrames.on((frame) => this.handleTermFrame(frame));
     // `activate()` can run before the socket has finished (re)connecting —
     // e.g. the very first tab switch, moments after page load. Refresh
     // again once connected, not just once here, so the picker doesn't stay
@@ -285,8 +289,6 @@ class TerminalModule extends AwicModule {
   override deactivate(): void {
     this.unsubEvents?.();
     this.unsubEvents = null;
-    this.unsubTermFrames?.();
-    this.unsubTermFrames = null;
     this.unsubConnection?.();
     this.unsubConnection = null;
     this.resizeObserver?.disconnect();

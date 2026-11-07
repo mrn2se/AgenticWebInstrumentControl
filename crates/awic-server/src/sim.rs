@@ -406,6 +406,16 @@ mod tests {
                 break;
             }
         }
+        // The point of following the board through a power cycle: its boot
+        // banner arrives, as on a real board.
+        let mut text = String::new();
+        while !text.contains("reset cause: power-on") {
+            match tokio::time::timeout(Duration::from_secs(2), conn.recv()).await {
+                Ok(SourceEvent::Data(d)) => text.push_str(&String::from_utf8_lossy(&d)),
+                Ok(_) => {}
+                Err(_) => panic!("no boot banner after the power cycle: {text:?}"),
+            }
+        }
     }
 
     #[tokio::test]
