@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SimStatus } from "../../proto/types";
 import {
+  agentPrompts,
   channelName,
   formatUptime,
   instrumentShortName,
@@ -113,5 +114,28 @@ describe("litSegments", () => {
     expect([...litSegments("cdefg")].sort()).toEqual(["c", "d", "e", "f", "g"]);
     expect(litSegments("").size).toBe(0);
     expect(litSegments("xz").size).toBe(0);
+  });
+});
+
+describe("agentPrompts", () => {
+  it("names the real devices and never the secrets", () => {
+    const s = status();
+    s.instruments.push({
+      device: "254-1.4",
+      label: "AWIC virtual logic analyzer #2 (8 channels)",
+      port: 4,
+      powered: true,
+      probes: [],
+      probed_points: [],
+    });
+    const prompts = agentPrompts(s);
+    expect(prompts.length).toBeGreaterThan(3);
+    const all = prompts.map((p) => p.text).join("\n");
+    expect(all).toContain("254-1.2");
+    expect(all).toContain("254-1.3");
+    expect(all).toContain("254-1.4");
+    expect(all).toContain("serial:254-1.1:1.0");
+    expect(all).not.toMatch(/4026/);
+    for (const p of prompts) expect(p.yourPart.length).toBeGreaterThan(0);
   });
 });

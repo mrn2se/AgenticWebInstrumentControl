@@ -627,43 +627,6 @@ impl McpHost {
         }
     }
 
-    /// The host's server state, for what depends on configuration (the
-    /// virtual bench's tools are listed only when it runs).
-    pub fn state(&self) -> &AppState {
-        &self.state
-    }
-
-    pub async fn sim_status(&self) -> Result<awic_proto::SimStatus, McpToolError> {
-        match self.call(Request::SimStatus { v: 1, id: 0 }).await? {
-            ResponseResult::SimStatus(r) => Ok(*r),
-            _ => Err(internal_shape_error()),
-        }
-    }
-
-    pub async fn sim_set(
-        &self,
-        req: crate::sim::SimChangeRequest,
-    ) -> Result<awic_proto::SimStatus, McpToolError> {
-        match self
-            .call(Request::SimSet {
-                v: 1,
-                id: 0,
-                faults: req.faults,
-                mystery: req.mystery,
-                reveal: req.reveal,
-                osc_r2_ohm: req.osc_r2_ohm,
-                input: req.input,
-                state: req.state,
-                presses: req.presses,
-                guess: req.guess,
-            })
-            .await?
-        {
-            ResponseResult::SimStatus(r) => Ok(*r),
-            _ => Err(internal_shape_error()),
-        }
-    }
-
     pub async fn usb_label(
         &self,
         hub: String,

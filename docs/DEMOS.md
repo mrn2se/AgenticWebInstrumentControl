@@ -112,14 +112,9 @@ shown on the Bench tab. `--set sim.shuffle=false` wires analyzer #1 in order.
 ### With an AI agent
 
 The virtual bench is a safe place to let an agent loose: nothing it switches can break anything.
-Next to AWIC's usual tools it offers four more:
-
-| Tool | Does |
-|---|---|
-| `virtual_bench` | Describes the board, the test points, the instruments and the faults |
-| `virtual_bench_set` | Sets faults, starts a mystery, turns the pot, reveals the secrets |
-| `virtual_bench_input` | Presses U3's keys and sets its switches |
-| `virtual_bench_guess` | Checks a guess at U3's part number |
+The agent gets **the same MCP tools as on a real bench**, nothing more. It cannot see the Bench tab
+or press U3's keys, set faults, turn the pot or reveal anything. Those stay with you, as they would
+at a real bench. Whatever it learns, it learns with the instruments.
 
 With Claude Code, from an **empty folder**:
 
@@ -129,13 +124,20 @@ claude mcp add --transport http awic-sim http://127.0.0.1:8080/mcp
 claude
 ```
 
-Use an empty folder rather than AWIC's source tree: the source names the answers. Then ask, for
-example:
+Use an empty folder rather than AWIC's source tree: the source names the answers.
 
-- "Use the awic-sim tools. Find out which logic analyzer #1 channel is on which test point."
-- "U3 on the virtual bench is an unmarked chip. Work out what part it is, then check with
-  `virtual_bench_guess`."
-- "Start a mystery fault on the virtual bench and find it with the instruments. Don't reveal it."
+An agent knows nothing about the board, so tell it what a person at the bench would: what is on
+the board and which device is which. The Bench tab's **Ask your AI** section has prompts ready to
+copy, filled in with this server's device ids, each with what you do while the agent works:
+
+| Prompt | The agent | You |
+|---|---|---|
+| Find out how the logic analyzer is wired | Maps analyzer #1's channels to TP1–TP8 | Watch |
+| Talk to the firmware | Explores the console, then finds a sensor read on the wire | Watch |
+| Catch a reboot | Records a power cycle and times the start-up | Watch |
+| What is U3? | Records U3's outputs and asks you to press keys | Press what it asks; check its answer in the part-number box |
+| Hunt a fault | Looks for what misbehaves | Start a mystery first; reveal after it answers |
+| Measure the 555 as I turn its pot | Measures, asks you to turn the pot, measures again | Move the slider |
 
 Every tool call shows up in the web UI's MCP tab, so you can watch the agent work.
 

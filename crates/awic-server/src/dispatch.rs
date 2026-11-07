@@ -1148,7 +1148,7 @@ pub async fn handle_request_with_origin(
                     server_name: "awic".to_string(),
                     server_version: env!("CARGO_PKG_VERSION").to_string(),
                     protocol_version: crate::mcp::protocol::LATEST_PROTOCOL_VERSION.to_string(),
-                    tool_count: crate::mcp::tools::tools_for(state).len() as u32,
+                    tool_count: crate::mcp::tools::tool_defs().len() as u32,
                     max_sessions: crate::mcp::route::MAX_SESSIONS as u32,
                     sessions: state.mcp_monitor().sessions(),
                     logging: state.mcp_monitor().logging(),

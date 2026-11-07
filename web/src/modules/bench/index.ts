@@ -5,6 +5,7 @@ import type { SimStatus } from "../../proto/types";
 import type { RequestParams } from "../../ws/client";
 import { toErrorInfo } from "../../ws/errors";
 import {
+  agentPrompts,
   channelName,
   formatHz,
   formatOhm,
@@ -89,6 +90,21 @@ class BenchModule extends AwicModule {
         </section>
 
         <section class="${CARD} lg:col-span-2">
+          <h3 class="${H3}">Ask your AI</h3>
+          <p class="${MUTED} mb-2">
+            Point an AI agent at this server and give it one of these. It gets the same MCP tools as on a
+            real bench and cannot see this page: the keys, the faults, the pot and the reveal stay yours.
+            Each prompt tells it what a person at the bench would — never the answers.
+          </p>
+          <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+            <span class="text-awic-fg-muted">With Claude Code, from an empty folder:</span>
+            <code id="ai-connect" class="break-all rounded bg-awic-bg px-2 py-1 font-mono text-xs"></code>
+            <button id="ai-connect-copy" type="button" class="${BTN}">Copy</button>
+          </div>
+          <ul id="ai-prompts" class="m-0 grid list-none gap-3 p-0 md:grid-cols-2"></ul>
+        </section>
+
+        <section class="${CARD} lg:col-span-2">
           <h3 class="${H3}">Test points</h3>
           <p id="tp-note" class="${MUTED} mb-2"></p>
           <div class="overflow-x-auto">
@@ -126,6 +142,11 @@ class BenchModule extends AwicModule {
     this.errorEl = this.requireEl("#bench-error");
     this.seven = createSevenSeg();
     this.requireEl("#u3-display").appendChild(this.seven);
+
+    const connect = `claude mcp add --transport http awic-sim ${window.location.origin}/mcp`;
+    this.requireEl("#ai-connect").textContent = connect;
+    const connectCopy = this.requireEl<HTMLButtonElement>("#ai-connect-copy");
+    connectCopy.addEventListener("click", () => copyText(connect, connectCopy, this.requireEl("#ai-connect")));
 
     this.requireEl("#board-console").addEventListener("click", () => {
       if (this.status) requestModuleActivation("terminal", this.status.board.serial_source);
@@ -226,6 +247,7 @@ class BenchModule extends AwicModule {
     this.requireEl("#bench-meta").textContent = `seed ${status.seed} · hub ${status.hub}`;
     this.renderBoard(status);
     this.renderCounter(status);
+    if (first) this.renderPrompts(status);
     this.renderTestPoints(status);
     this.renderPot(status, first);
     this.renderFaults(status);
@@ -287,6 +309,35 @@ class BenchModule extends AwicModule {
       verdict.textContent = c.solved ? `Solved: ${c.part}` : `Revealed: ${c.part}`;
       verdict.className = "text-sm text-awic-ok";
     }
+  }
+
+  /** Once: the devices they name do not change while the server runs. */
+  private renderPrompts(s: SimStatus): void {
+    this.requireEl("#ai-prompts").replaceChildren(
+      ...agentPrompts(s).map((prompt) => {
+        const li = document.createElement("li");
+        li.className = "flex flex-col gap-2 rounded-md border border-awic-border p-3";
+        const head = document.createElement("div");
+        head.className = "flex items-center justify-between gap-2";
+        const title = document.createElement("span");
+        title.className = "font-medium";
+        title.textContent = prompt.title;
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = BTN;
+        copy.textContent = "Copy";
+        copy.addEventListener("click", () => copyText(prompt.text, copy, text));
+        head.append(title, copy);
+        const part = document.createElement("p");
+        part.className = "m-0 text-sm text-awic-fg-muted";
+        part.textContent = `Your part: ${prompt.yourPart}`;
+        const text = document.createElement("p");
+        text.className = "m-0 max-h-40 overflow-auto rounded bg-awic-bg p-2 text-xs leading-5";
+        text.textContent = prompt.text;
+        li.append(head, part, text);
+        return li;
+      }),
+    );
   }
 
   private renderTestPoints(s: SimStatus): void {
@@ -376,6 +427,61 @@ class BenchModule extends AwicModule {
     );
     this.requireEl<HTMLButtonElement>("#fault-reveal").disabled = s.revealed;
   }
+}
+
+/**
+ * Copies `text`, saying so on the button for a moment. Copies during the
+ * click itself first, through a hidden text area: that works on a plain-http
+ * LAN address too, where the clipboard API is missing, and does not hang
+ * the way `navigator.clipboard.writeText` can when the browser holds it back.
+ * If neither works, `select` (the text on the page) is selected for Ctrl+C.
+ */
+function copyText(text: string, button: HTMLButtonElement, select?: HTMLElement): void {
+  const label = button.textContent;
+  const show = (message: string): void => {
+    button.textContent = message;
+    setTimeout(() => {
+      button.textContent = label;
+    }, 1800);
+  };
+  const fallback = (): void => {
+    if (select) {
+      const range = document.createRange();
+      range.selectNodeContents(select);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    show("Press Ctrl+C");
+  };
+
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  button.focus();
+  if (copied) {
+    show("Copied");
+    return;
+  }
+  if (!navigator.clipboard) {
+    fallback();
+    return;
+  }
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1000));
+  Promise.race([navigator.clipboard.writeText(text).then(() => true, () => false), timeout]).then((ok) =>
+    ok ? show("Copied") : fallback(),
+  );
 }
 
 customElements.define(TAG, BenchModule);

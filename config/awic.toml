@@ -122,7 +122,7 @@ fake = false
 # instruments. Off by default; `awic --sim` is a shorthand for enabled = true.
 enabled = false
 # Seeds every random choice (wiring, fault timing). 0 = a new one each start;
-# the one in use is shown in the web UI's Bench tab and by sim_status.
+# the one in use is shown in the web UI's Bench tab and in the server log.
 seed = 0
 # Faults in force at start: any of clock_glitch, i2c_nack, baud_drift,
 # spi_cs_glitch, watchdog_reset, runt_pulse, osc_jitter, key_bounce — or
