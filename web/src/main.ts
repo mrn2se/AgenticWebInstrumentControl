@@ -18,6 +18,7 @@ import "./modules/graph";
 import "./modules/usb";
 import "./modules/terminal";
 import "./modules/mcp";
+import "./modules/bench";
 
 const LINK_BUTTON = "text-awic-accent underline hover:opacity-80";
 

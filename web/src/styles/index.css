@@ -41,6 +41,9 @@
   --color-awic-ok-bg: #e6f4ea;
   --color-awic-warn: #9a6700;
   --color-awic-warn-bg: #fff6e0;
+  /* The virtual bench's seven-segment display: a lit and an unlit segment. */
+  --color-awic-seg-on: #e5312b;
+  --color-awic-seg-off: #3b2826;
 }
 
 [data-theme="dark"] {
@@ -57,6 +60,8 @@
   --color-awic-ok-bg: #123321;
   --color-awic-warn: #e0a742;
   --color-awic-warn-bg: #3a2f12;
+  --color-awic-seg-on: #ff4d3d;
+  --color-awic-seg-off: #3a2624;
 }
 
 [data-theme="light"] {

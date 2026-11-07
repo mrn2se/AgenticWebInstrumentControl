@@ -1,4 +1,5 @@
 import type { AwicModule } from "./module";
+import type { ModuleContext } from "./context";
 
 /**
  * The module registration seam. T8 and T9 each add a directory under
@@ -16,6 +17,11 @@ export interface ModuleDescriptor {
   readonly title: string;
   /** Constructs a fresh, un-initialized module element. The shell calls `.init(ctx)` on it. */
   readonly factory: () => AwicModule;
+  /**
+   * For a tab only some servers have a use for (the virtual bench): asked
+   * on every connect whether to show the tab. Without it the tab always shows.
+   */
+  readonly available?: (ctx: ModuleContext) => Promise<boolean>;
 }
 
 const registry: ModuleDescriptor[] = [];
