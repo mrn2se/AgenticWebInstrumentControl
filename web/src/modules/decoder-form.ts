@@ -109,12 +109,45 @@ function validateRoleBindings(
   return errors;
 }
 
+/** The raw value an auto-detectable rate option takes when the server should detect it (SPEC §6.1 "Auto-baud"). */
+export const AUTO_RATE = "auto";
+
+/**
+ * The option holding the bit rate a decoder can detect from the line itself —
+ * UART's `baud`, CAN's `bitrate` — or `null`. Mirrors the server's
+ * `auto_rate_option`; `decode.list` declares these as plain integers.
+ */
+export function autoRateOptionId(decoder: DecoderId): string | null {
+  if (decoder === "uart") return "baud";
+  if (decoder === "can") return "bitrate";
+  return null;
+}
+
+/**
+ * The warning line for a finished decode: the server's note and how much was
+ * left out. The detected rate goes in the summary, not here.
+ */
+export function decodeStatusLine(result: {
+  readonly note?: string | null;
+  readonly truncated: boolean;
+  readonly omitted: number;
+}): string {
+  return [
+    result.note,
+    result.truncated ? `truncated: ${result.omitted} annotation(s) omitted` : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 function parseOptionValue(
+  decoderId: DecoderId,
   spec: DecoderOptionSpec,
   raw: RawOptionValue,
 ): { readonly ok: true; readonly value: OptionValue } | { readonly ok: false; readonly message: string } {
   switch (spec.type) {
     case "int": {
+      if (raw === AUTO_RATE && autoRateOptionId(decoderId) === spec.id) return { ok: true, value: AUTO_RATE };
       const n = typeof raw === "boolean" ? NaN : Number(raw);
       if (!Number.isFinite(n) || !Number.isInteger(n)) {
         return { ok: false, message: `${spec.id} must be a whole number` };
@@ -166,7 +199,7 @@ export function buildDecodeConfig(
   for (const spec of decoder.options) {
     const raw = optionInputs.get(spec.id);
     if (raw === undefined) continue;
-    const parsed = parseOptionValue(spec, raw);
+    const parsed = parseOptionValue(decoder.id, spec, raw);
     if (!parsed.ok) {
       errors.push({ field: spec.id, message: parsed.message });
     } else {

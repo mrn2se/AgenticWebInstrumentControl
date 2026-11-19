@@ -82,7 +82,15 @@ import {
   waitOutcomeFromResult,
   type SearchOutcome,
 } from "./search-ui";
-import { buildDecodeConfig, initialOptionInputs, type RawOptionValue } from "../decoder-form";
+import { type DecodeRate, decodeRateOf, summarizeDecode, summaryLine, unitsToHexDump, unitsToText } from "./decode-summary";
+import {
+  AUTO_RATE,
+  autoRateOptionId,
+  buildDecodeConfig,
+  decodeStatusLine,
+  initialOptionInputs,
+  type RawOptionValue,
+} from "../decoder-form";
 import { annotationLaneFor, decodedFrameRows, formatDecodedFrameTimestamp } from "./decoded-frames";
 import { imageUnavailableReason, imageViewUrl, isSingleChannel, type ImageKind } from "./image-view";
 
@@ -324,6 +332,15 @@ class GraphModule extends AwicModule {
   private decodeHysteresisMv: string | undefined;
   private decodeOptionInputs: Map<string, RawOptionValue> = new Map();
   private decodeAnnotations: readonly DecodedAnnotation[] = [];
+  /** The rate the last decode ran at, for its summary; `null` for a decoder without one. */
+  private decodeRate: DecodeRate | null = null;
+  private decodeDumpMode: "text" | "hex" = "text";
+  /** The sample rate of the last decode, so switching Text/Hex can redraw it. */
+  private decodeSampleRateHz = 1;
+  private decodeSummaryEl!: HTMLElement;
+  private decodeSummaryLineEl!: HTMLElement;
+  private decodeDumpControlsEl!: HTMLElement;
+  private decodeDumpEl!: HTMLElement;
   /** Set once a decode has been applied in Live mode, so a viewport change re-decodes automatically (debounced) — never before the user has actually asked for a decode once. */
   private decodeActive = false;
   private readonly decodeDebouncer: Debouncer<void> = debounce(500, () => this.autoRedecode());
@@ -516,6 +533,15 @@ class GraphModule extends AwicModule {
               <div id="decode-options" class="mb-2 flex flex-col gap-1"></div>
               <button id="decode-apply" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL}">Decode</button>
               <p id="decode-error" class="mt-2 text-xs text-awic-danger empty:hidden"></p>
+              <div id="decode-summary" hidden class="mt-2 flex flex-col gap-1">
+                <p id="decode-summary-line" class="text-xs font-medium"></p>
+                <div id="decode-dump-controls" class="flex items-center gap-1" role="group" aria-label="Data view">
+                  <button data-dump="text" type="button" class="${BUTTON_BASE} ${BUTTON_ACTIVE} text-xs">Text</button>
+                  <button data-dump="hex" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL} text-xs">Hex</button>
+                  <button id="decode-copy" type="button" class="${BUTTON_BASE} ${BUTTON_NEUTRAL} ml-auto text-xs">Copy</button>
+                </div>
+                <pre id="decode-dump" class="max-h-48 overflow-auto rounded border border-awic-border bg-awic-bg p-2 font-mono text-xs"></pre>
+              </div>
               <div id="decode-frames" class="mt-2 flex flex-col gap-1"></div>
             </section>
           </div>
@@ -590,6 +616,10 @@ class GraphModule extends AwicModule {
     this.decodeApplyEl = this.requireEl("#decode-apply");
     this.decodeErrorEl = this.requireEl("#decode-error");
     this.decodeFramesEl = this.requireEl("#decode-frames");
+    this.decodeSummaryEl = this.requireEl("#decode-summary");
+    this.decodeSummaryLineEl = this.requireEl("#decode-summary-line");
+    this.decodeDumpControlsEl = this.requireEl("#decode-dump-controls");
+    this.decodeDumpEl = this.requireEl("#decode-dump");
 
     this.renderRendererOptions();
     this.wireStaticControls();
@@ -1416,11 +1446,11 @@ class GraphModule extends AwicModule {
   private liveRecordingOnDevice(): RecordingSummary | null {
     const device = this.selectedDeviceId;
     if (device === null) return null;
-    return (
-      this.liveRecordings.find((r) => r.rec === this.liveRecId) ??
-      this.liveRecordings.find((r) => r.device === device && r.state === "recording") ??
-      null
-    );
+    const watched = this.liveRecordings.find((r) => r.rec === this.liveRecId);
+    if (watched?.state === "recording") return watched;
+    // A stopped recording kept on screen is history: a running one on the
+    // device (an agent's) still holds it, and is the one Stop and Start mean.
+    return this.liveRecordings.find((r) => r.device === device && r.state === "recording") ?? watched ?? null;
   }
 
   private currentActivity(): DeviceActivity {
@@ -1534,7 +1564,7 @@ class GraphModule extends AwicModule {
     const device = this.selectedDeviceId;
     if (!device) return;
     try {
-      await this.dropEndedLiveRecording();
+      await this.releaseEndedLiveRecording();
       const list = await this.ctx.ws.send("rec.list", {});
       this.applyRecList(list);
       const existing = pickRecordingToAttach(list.recordings, device);
@@ -1597,15 +1627,18 @@ class GraphModule extends AwicModule {
   }
 
   /**
-   * The previous Live run's recording, when it ended on its own (its device
-   * left the bus, or stalled): no Stop is offered then, so `onStopLive`'s
-   * B-68 cleanup never ran, and every power cycle under Live left one
-   * recording behind in `error`. Starting again is the user moving on, so the
-   * same rule applies here — started by this tab, nothing taken from it.
+   * The previous Live run's recording, still on screen after it ended —
+   * stopped by the user (`onStopLive` keeps it to look through) or on its
+   * own (its device left the bus, or stalled). Starting again is the user
+   * moving on: close its view, and delete it if this tab started it and
+   * nothing was taken from it. A Live run used to leave its recording behind
+   * for ever: 49 of them, 32 MB of the 256 MB budget, after ~70 start/stops
+   * (B-68). Having taken a snapshot means the recording was worth keeping,
+   * and one this tab merely attached to belongs to whoever started it.
    */
-  private async dropEndedLiveRecording(): Promise<void> {
+  private async releaseEndedLiveRecording(): Promise<void> {
     const rec = this.liveRecId;
-    if (rec === null || !this.liveRecStartedHere || this.liveSnapshotCapture !== null) return;
+    if (rec === null) return;
     const fresh = await this.ctx.ws.send("rec.list", {});
     if (fresh.recordings.some((r) => r.rec === rec && r.state === "recording")) return;
     this.stopLiveListPolling();
@@ -1618,51 +1651,59 @@ class GraphModule extends AwicModule {
         /* the view went with its recording */
       }
     }
-    try {
-      await this.ctx.ws.send("rec.delete", { rec });
-    } catch {
-      // Already gone, or held by something else: leave it listed.
+    if (this.liveRecStartedHere && this.liveSnapshotCapture === null) {
+      try {
+        await this.ctx.ws.send("rec.delete", { rec });
+      } catch {
+        // Already gone, or held by something else: leave it listed.
+      }
     }
     this.liveRecStartedHere = false;
     this.liveRecId = null;
   }
 
+  /**
+   * Stop ends the recording but keeps it on screen: stopping is how a user
+   * says "that's the sequence, now let me look at it", and deleting the
+   * history there threw away exactly what they had just recorded. The view
+   * stays open so zoom, pan, Snapshot, Decode and search all keep working on
+   * it. The B-68 cleanup (no recording left behind per start/stop) moves to
+   * the next Start, in `releaseEndedLiveRecording`.
+   */
   private async onStopLive(): Promise<void> {
-    const rec = this.liveRecId ?? this.liveRecordingOnDevice()?.rec ?? null;
-    const view = this.liveViewId;
-    this.stopLiveListPolling();
-    this.liveViewId = null;
-    if (view !== null) {
-      try {
-        await this.ctx.ws.send("rec.view.close", { view });
-      } catch {
-        /* the connection may already be gone; nothing more to clean up client-side */
-      }
-    }
+    // The running recording first: with a stopped one still on screen, an
+    // agent's running recording on the same device is the one Stop is for.
+    const rec = this.liveRecordingOnDevice()?.rec ?? this.liveRecId ?? null;
     if (rec !== null) {
       try {
         await this.ctx.ws.send("rec.stop", { rec });
-        // A Live run used to leave its recording behind for ever: 49 of them,
-        // 32 MB of the 256 MB budget, after ~70 start/stops from this tab
-        // (B-68). The tab deletes the one it started itself, and only when
-        // nothing was taken from it - a snapshot is a separate capture, but
-        // having taken one means the recording was worth keeping. A recording
-        // this tab merely attached to belongs to whoever started it.
-        if (this.liveRecStartedHere && this.liveSnapshotCapture === null) {
-          try {
-            await this.ctx.ws.send("rec.delete", { rec });
-          } catch {
-            // Already gone, or held by something else: leave it listed.
-          }
-        }
       } catch {
         // Surfaced via ws.errors.
       }
+      if (rec === this.liveRecId) await this.freezeStoppedLiveView();
     }
-    this.liveRecStartedHere = false;
-    this.liveRecId = null;
     this.renderRunStopButtons();
     this.renderLiveStatus();
+  }
+
+  /**
+   * A stopped recording no longer grows, so a follow view of it would only
+   * resend the same frame at 30 fps. Pin the view to what was on screen at
+   * the moment of Stop; zooming and panning then fetch from the history.
+   */
+  private async freezeStoppedLiveView(): Promise<void> {
+    try {
+      this.applyRecList(await this.ctx.ws.send("rec.list", {}));
+    } catch {
+      // The next poll refreshes it.
+    }
+    if (!this.liveViewState.following) return;
+    const range = this.computeVisibleRange();
+    if (range === null) return;
+    this.viewportDebouncer.cancel();
+    this.setLiveViewState(pauseAtViewport(range.t0, range.t1));
+    this.renderer?.setViewport(range.t0, range.t1);
+    this.flushViewUpdate();
   }
 
   private startLiveListPolling(): void {
@@ -1711,12 +1752,16 @@ class GraphModule extends AwicModule {
   private renderLiveButtons(): void {
     const live = this.mode === "live";
     const watching = live && this.liveViewId !== null;
-    this.followButtonEl.disabled = !watching || this.liveViewState.following;
+    const summary = this.liveRecordings.find((r) => r.rec === this.liveRecId);
+    const ended = summary !== undefined && summary.state !== "recording";
+    this.followButtonEl.disabled = !watching || ended || this.liveViewState.following;
     this.followButtonEl.title = !live
       ? "Live mode only"
       : !watching
         ? "Start a Live recording first"
-        : this.liveViewState.following
+        : ended
+          ? "The recording has ended — zoom and pan to look through it"
+          : this.liveViewState.following
           ? "Already following the newest data"
           : "Go back to following the newest data";
     this.snapshotButtonEl.disabled = !watching;
@@ -2343,13 +2388,35 @@ class GraphModule extends AwicModule {
         if (spec.min !== null && spec.min !== undefined) input.min = String(spec.min);
         if (spec.max !== null && spec.max !== undefined) input.max = String(spec.max);
         input.className = NUMBER_INPUT;
-        input.value = String(this.decodeOptionInputs.get(spec.id) ?? spec.default);
+        const raw = this.decodeOptionInputs.get(spec.id);
+        const isAuto = raw === AUTO_RATE;
+        input.value = isAuto ? String(spec.default) : String(raw ?? spec.default);
+        input.disabled = isAuto;
         input.addEventListener("change", () => {
           const next = new Map(this.decodeOptionInputs);
           next.set(spec.id, input.value);
           this.decodeOptionInputs = next;
         });
         row.appendChild(input);
+        // UART's baud and CAN's bitrate can be detected from the line itself
+        // (SPEC §6.1): a number box cannot take "auto", so it gets its own box.
+        if (spec.id === autoRateOptionId(decoder.id)) {
+          const autoLabel = document.createElement("label");
+          autoLabel.className = LABEL;
+          autoLabel.title = "Detect the rate from the line's own pulse widths";
+          const auto = document.createElement("input");
+          auto.type = "checkbox";
+          auto.dataset.autoRate = spec.id;
+          auto.checked = isAuto;
+          auto.addEventListener("change", () => {
+            input.disabled = auto.checked;
+            const next = new Map(this.decodeOptionInputs);
+            next.set(spec.id, auto.checked ? AUTO_RATE : input.value);
+            this.decodeOptionInputs = next;
+          });
+          autoLabel.append(auto, "auto");
+          row.appendChild(autoLabel);
+        }
       }
       this.decodeOptionsEl.appendChild(row);
     }
@@ -2376,6 +2443,7 @@ class GraphModule extends AwicModule {
       // Live's view frames and `rec.decode` both count from the recording's
       // own start, so there is nothing to shift there.
       let origin = 0;
+      let detectedRate: number | null = null;
       if (this.mode === "single") {
         const capture = this.acqState.captureHandle;
         if (!capture) {
@@ -2391,7 +2459,8 @@ class GraphModule extends AwicModule {
         annotations = response.annotations ?? [];
         rateHz = this.effective?.cfg.rate_hz ?? this.currentRateHz();
         origin = this.captureT0Seconds;
-        this.decodeErrorEl.textContent = [response.note, response.truncated ? `truncated: ${response.omitted} annotation(s) omitted` : null].filter(Boolean).join("; ");
+        this.decodeErrorEl.textContent = decodeStatusLine(response);
+        detectedRate = response.detected_baud ?? null;
       } else {
         const rec = this.liveRecId;
         if (rec === null) {
@@ -2409,11 +2478,13 @@ class GraphModule extends AwicModule {
         });
         annotations = response.annotations ?? [];
         rateHz = this.liveRateHz;
-        this.decodeErrorEl.textContent = [response.note, response.truncated ? `truncated: ${response.omitted} annotation(s) omitted` : null].filter(Boolean).join("; ");
+        this.decodeErrorEl.textContent = decodeStatusLine(response);
+        detectedRate = response.detected_baud ?? null;
         this.decodeActive = true;
       }
       this.decodeAnnotations = annotations;
       this.decodeOriginSeconds = origin;
+      this.decodeRate = decodeRateOf(decoder, options, detectedRate);
       this.applyDecodeAnnotationsToRenderer(channels.map((c) => c.channel), rateHz);
       this.renderDecodeFrames(rateHz);
     } catch (err) {
@@ -2431,6 +2502,7 @@ class GraphModule extends AwicModule {
   }
 
   private renderDecodeFrames(rateHz: number): void {
+    this.renderDecodeSummary(rateHz);
     this.decodeFramesEl.replaceChildren();
     const rows = decodedFrameRows(this.decodeAnnotations, rateHz, this.decodeOriginSeconds);
     if (rows.length === 0) {
@@ -2478,7 +2550,64 @@ class GraphModule extends AwicModule {
     if (this.mode === "live" && this.decodeActive) void this.onDecodeApplyClick();
   }
 
+  /**
+   * The summary above the frame list: rate, counts and errors, and the data
+   * as text or a hex dump. Hidden until something was decoded; the dump only
+   * when the frames carried data (UART bytes).
+   */
+  private renderDecodeSummary(rateHz: number): void {
+    this.decodeSampleRateHz = rateHz;
+    const decoder = this.currentDecoderInfo();
+    const summary = summarizeDecode(this.decodeAnnotations, rateHz);
+    this.decodeSummaryEl.hidden = !decoder || summary.frames === 0;
+    if (!decoder || summary.frames === 0) return;
+    this.decodeSummaryLineEl.textContent = summaryLine(decoder.id, summary, this.decodeRate);
+    const hasData = summary.bytes > 0;
+    this.decodeDumpControlsEl.hidden = !hasData;
+    this.decodeDumpEl.hidden = !hasData;
+    if (!hasData) return;
+    const text = this.decodeDumpMode === "text";
+    this.decodeDumpEl.textContent = text ? unitsToText(summary.units) : unitsToHexDump(summary.units);
+    // Text wraps like a terminal would; a hex dump keeps its columns.
+    this.decodeDumpEl.classList.toggle("whitespace-pre-wrap", text);
+    this.decodeDumpEl.classList.toggle("break-all", text);
+    this.decodeDumpEl.classList.toggle("whitespace-pre", !text);
+    for (const button of this.decodeDumpControlsEl.querySelectorAll<HTMLButtonElement>("button[data-dump]")) {
+      const active = button.dataset.dump === this.decodeDumpMode;
+      // Whole class strings, like the mode buttons: BUTTON_ACTIVE holds several
+      // classes, and classList.toggle takes exactly one.
+      button.className = `${BUTTON_BASE} ${active ? BUTTON_ACTIVE : BUTTON_NEUTRAL} text-xs`;
+      button.setAttribute("aria-pressed", String(active));
+    }
+  }
+
+  /**
+   * Copies the dump. `navigator.clipboard` exists only in a secure context,
+   * and AWIC is usually opened over plain HTTP from another machine on the
+   * bench network, so fall back to selecting the text and `execCommand`.
+   */
+  private async copyDecodeDump(): Promise<void> {
+    const text = this.decodeDumpEl.textContent ?? "";
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch {
+      // Fall through to the selection.
+    }
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(this.decodeDumpEl);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    // Deprecated, but the only copy there is outside a secure context; left
+    // selected either way, so Ctrl+C works if it refuses.
+    document.execCommand("copy");
+  }
+
   private resetDecodeResults(): void {
+    this.decodeRate = null;
     this.decodeAnnotations = [];
     this.decodeActive = false;
     this.decodeErrorEl.textContent = "";
@@ -2529,6 +2658,13 @@ class GraphModule extends AwicModule {
     this.stopButtonEl.addEventListener("click", () => void this.onStopClick());
     this.followButtonEl.addEventListener("click", () => this.onFollowClick());
     this.snapshotButtonEl.addEventListener("click", () => void this.onSnapshotClick());
+    for (const button of this.decodeDumpControlsEl.querySelectorAll<HTMLButtonElement>("button[data-dump]")) {
+      button.addEventListener("click", () => {
+        this.decodeDumpMode = button.dataset.dump === "hex" ? "hex" : "text";
+        this.renderDecodeSummary(this.decodeSampleRateHz);
+      });
+    }
+    this.requireEl("#decode-copy").addEventListener("click", () => void this.copyDecodeDump());
     for (const button of this.analyzePanelEl.querySelectorAll<HTMLButtonElement>("[data-image-kind]")) {
       button.addEventListener("click", () => this.onImageClick(button.dataset.imageKind as ImageKind));
     }

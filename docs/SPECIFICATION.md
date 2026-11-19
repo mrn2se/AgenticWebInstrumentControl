@@ -900,6 +900,9 @@ blanks while zooming. If frames still carry the old flag after that, the view ch
 again, those frames are drawn meanwhile, and the status line says so. *Follow*, *Snapshot* and *Trigger* are always on the toolbar and disabled, with a tooltip
 saying why, when they do not apply. The toolbar shows the retained span and the memory in use, so a user can see how far
 back they can scroll. *Snapshot* turns the visible range into a capture (§2.8.5) for measurements.
+*Stop* ends the recording but keeps it on screen: the view freezes at the range shown at that
+moment, and zoom, pan, *Snapshot*, decode and search keep working over its whole history. The
+next *Start* closes it, and deletes it when this tab started it and no snapshot was taken from it.
 A pattern search box (§2.9) lists matches as clickable timestamps that jump the view.
 
 ### 5.4 Measurements
