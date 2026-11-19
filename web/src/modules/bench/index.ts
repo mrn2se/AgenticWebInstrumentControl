@@ -490,8 +490,10 @@ registerModule({
   id: "bench",
   title: "Bench",
   factory: () => document.createElement(TAG) as BenchModule,
+  // Quiet: on a real bench the answer is `sim_disabled`, which only means
+  // "no Bench tab here" and is not an error to show.
   available: (ctx) =>
-    ctx.ws.send("sim.status", {}).then(
+    ctx.ws.send("sim.status", {}, { quiet: true }).then(
       () => true,
       () => false,
     ),
