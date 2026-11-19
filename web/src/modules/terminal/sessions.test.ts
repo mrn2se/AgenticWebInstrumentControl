@@ -5,8 +5,7 @@ import {
   removeSession,
   stateBadge,
   upsertSession,
-  type SessionViewModel,
-} from "./sessions";
+  type SessionViewModel, canForceRelease } from "./sessions";
 
 function session(overrides: Partial<SessionViewModel> = {}): SessionViewModel {
   return {
@@ -68,5 +67,20 @@ describe("session map operations", () => {
 
     const unchanged = applySessionState(withOne, 999, "closed");
     expect(unchanged).toBe(withOne);
+  });
+});
+
+describe("canForceRelease", () => {
+  const serial = { sessionId: 1, source: "serial:3-4:1.0", kind: "serial", label: "ttyUSB0", state: "open" } as const;
+
+  it("is offered for an open or waiting serial session", () => {
+    expect(canForceRelease(serial)).toBe(true);
+    expect(canForceRelease({ ...serial, state: "waiting" })).toBe(true);
+  });
+
+  it("is not offered once closed, nor for sessions that hold no port", () => {
+    expect(canForceRelease({ ...serial, state: "closed" })).toBe(false);
+    expect(canForceRelease({ ...serial, kind: "log" })).toBe(false);
+    expect(canForceRelease({ ...serial, kind: "decode" })).toBe(false);
   });
 });

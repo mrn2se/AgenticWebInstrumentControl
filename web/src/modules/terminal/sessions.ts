@@ -17,6 +17,13 @@ export function isWritable(session: SessionViewModel): boolean {
   return session.kind !== "log" && session.state === "open";
 }
 
+/** Whether a session's tab offers *Release*: force-closing the port for
+ * every client that joined it (`term.close` with `force`). Only a serial
+ * session holds a port, and a closed one holds nothing any more. */
+export function canForceRelease(session: SessionViewModel): boolean {
+  return session.kind === "serial" && session.state !== "closed";
+}
+
 /** Short badge text for a session's sub-tab. */
 export function stateBadge(state: TerminalState): string {
   switch (state) {

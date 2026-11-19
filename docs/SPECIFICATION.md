@@ -1650,7 +1650,8 @@ uses), with several sessions side by side as sub-tabs. A session is opened on a 
                      "parity": "none", "stop_bits": 1 } }
 → { "session": 3 }
 { "op": "term.write", "session": 3, "data": "help\r" }          // or "data_b64" for raw bytes
-{ "op": "term.close", "session": 3 }
+{ "op": "term.close", "session": 3 }                           // leave; the port closes when nobody is left
+{ "op": "term.close", "session": 3, "force": true }            // close it for everyone and release the port
 { "event": "term.state", "session": 3, "state": "open" | "waiting" | "closed", "msg": "..." }
 { "event": "term.sources" }                                     // the source list changed; re-read
 ```
@@ -1674,6 +1675,11 @@ scrollback server-side, replayed on join.
   interleaves. No C: `rustix` termios plus tokio's `AsyncFd`.
 - The USB tree shows a terminal icon on a port whose device has a UART; clicking it opens the
   session.
+- **Release**: `term.close` with `force` closes a serial session for every client that joined it,
+  other tabs and MCP agents alike, and answers once the port is closed. Each of them gets
+  `term.state` `closed`, and its own later `term.close` succeeds as a no-op. In the Terminal tab
+  it is the ⏏ button beside a serial session's ×. The server log cannot be force-closed
+  (`terminal_session_persistent`). An agent's `serial_close` stays an ordinary leave.
 - **Port power**: when the device disappears (its port switched off, §4.4) the session goes to
   `waiting`, keeps its scrollback, and reopens by itself when the same interface path reappears.
 - MCP tools (M7): `serial_list`, `serial_open`, `serial_write`, `serial_read`, with `serial_read`
