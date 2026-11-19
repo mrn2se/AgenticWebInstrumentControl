@@ -839,14 +839,33 @@ mod tests {
         // The connection is dropped by the time force_close returns: the
         // memory source's event sender sees its receiver gone.
         let port_tx = source.events_tx.lock().unwrap().clone().unwrap();
-        assert!(port_tx.is_closed(), "the port must be closed when force_close returns");
+        assert!(
+            port_tx.is_closed(),
+            "the port must be closed when force_close returns"
+        );
         // Both subscribers' streams end.
-        assert_eq!(timeout(Duration::from_millis(200), out_a.recv()).await.unwrap(), None);
-        assert_eq!(timeout(Duration::from_millis(200), out_b.recv()).await.unwrap(), None);
+        assert_eq!(
+            timeout(Duration::from_millis(200), out_a.recv())
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            timeout(Duration::from_millis(200), out_b.recv())
+                .await
+                .unwrap(),
+            None
+        );
         // Every client hears it.
         let closed = timeout(Duration::from_millis(200), async {
             loop {
-                if let Ok(Event::TermState { session: s, state, msg, .. }) = events.recv().await {
+                if let Ok(Event::TermState {
+                    session: s,
+                    state,
+                    msg,
+                    ..
+                }) = events.recv().await
+                {
                     if s == session.id && state == TerminalState::Closed {
                         return msg;
                     }

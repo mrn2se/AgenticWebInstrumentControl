@@ -171,7 +171,8 @@ async fn a_client_that_disconnects_without_term_close_still_releases_the_session
     );
 }
 
-type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Sends `request` and reads until the response with its `id`, returning it.
 async fn call(ws: &mut Ws, request: serde_json::Value) -> serde_json::Value {
@@ -200,13 +201,20 @@ async fn force_close_from_one_client_releases_a_port_another_still_holds() {
     let open = json!({ "v": 1, "id": 1, "op": "term.open", "source": "serial:test:1.0",
                        "serial": { "baud": 115200, "data_bits": 8, "parity": "none", "stop_bits": "one" } });
 
-    let (mut holder, _) = tokio_tungstenite::connect_async(&url).await.expect("connect");
-    let (mut releaser, _) = tokio_tungstenite::connect_async(&url).await.expect("connect");
+    let (mut holder, _) = tokio_tungstenite::connect_async(&url)
+        .await
+        .expect("connect");
+    let (mut releaser, _) = tokio_tungstenite::connect_async(&url)
+        .await
+        .expect("connect");
     let opened = call(&mut holder, open.clone()).await;
     assert_eq!(opened["ok"], true, "{opened:?}");
     let session = opened["result"]["session"].clone();
     let joined = call(&mut releaser, open).await;
-    assert_eq!(joined["result"]["session"], session, "the second client joins the same session");
+    assert_eq!(
+        joined["result"]["session"], session,
+        "the second client joins the same session"
+    );
 
     let closed = call(
         &mut releaser,
@@ -214,12 +222,20 @@ async fn force_close_from_one_client_releases_a_port_another_still_holds() {
     )
     .await;
     assert_eq!(closed["ok"], true, "{closed:?}");
-    assert_eq!(alive.load(Ordering::SeqCst), 0, "the port must be released when the reply arrives");
+    assert_eq!(
+        alive.load(Ordering::SeqCst),
+        0,
+        "the port must be released when the reply arrives"
+    );
 
     // The holder, which never closed anything, hears that its session closed.
     let event = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let msg = holder.next().await.expect("stream open").expect("ws message");
+            let msg = holder
+                .next()
+                .await
+                .expect("stream open")
+                .expect("ws message");
             if let ClientMessage::Text(text) = msg {
                 let value: serde_json::Value = serde_json::from_str(&text).unwrap();
                 if value["event"] == "term.state" && value["session"] == session {
@@ -233,7 +249,11 @@ async fn force_close_from_one_client_releases_a_port_another_still_holds() {
     assert_eq!(event["state"], "closed", "{event:?}");
 
     // Its own later plain close is harmless.
-    let again = call(&mut holder, json!({ "v": 1, "id": 3, "op": "term.close", "session": session })).await;
+    let again = call(
+        &mut holder,
+        json!({ "v": 1, "id": 3, "op": "term.close", "session": session }),
+    )
+    .await;
     assert_eq!(again["ok"], true, "{again:?}");
 }
 
