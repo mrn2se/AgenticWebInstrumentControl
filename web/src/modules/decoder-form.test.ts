@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildDecodeConfig, initialOptionInputs, type OptionInputs, type RoleBindings } from "./decoder-form";
+import {
+  AUTO_RATE,
+  autoRateOptionId,
+  buildDecodeConfig,
+  decodeStatusLine,
+  initialOptionInputs,
+  type OptionInputs,
+  type RoleBindings,
+} from "./decoder-form";
 import type { DecoderInfo } from "../proto/types";
 
 const uart: DecoderInfo = {
@@ -281,5 +289,39 @@ describe("buildDecodeConfig: 1-Wire", () => {
     if (result.status !== "valid") return;
     expect(result.config.channels).toEqual([{ role: "owr", channel: 2 }]);
     expect(result.config.options).toEqual([{ id: "speed", value: "overdrive" }]);
+  });
+});
+
+// SPEC §6.1 "Auto-baud": the server detects UART's baud (and CAN's bitrate)
+// when given "auto", but decode.list declares them as integers, and the
+// form refused anything that was not a whole number.
+describe("buildDecodeConfig: auto-detected rate", () => {
+  it("sends baud \"auto\" for UART", () => {
+    const inputs: OptionInputs = new Map([["baud", AUTO_RATE]]);
+    const result = buildDecodeConfig(uart, bindings([["rx", 0]]), inputs);
+    expect(result.status).toBe("valid");
+    if (result.status === "valid") expect(result.config.options).toEqual([{ id: "baud", value: "auto" }]);
+  });
+
+  it("refuses \"auto\" for an option no decoder can detect", () => {
+    const inputs: OptionInputs = new Map([["data_bits", AUTO_RATE]]);
+    const result = buildDecodeConfig(uart, bindings([["rx", 0]]), inputs);
+    expect(result.status).toBe("invalid");
+  });
+
+  it("names the rate option per decoder", () => {
+    expect(autoRateOptionId("uart")).toBe("baud");
+    expect(autoRateOptionId("can")).toBe("bitrate");
+    expect(autoRateOptionId("spi")).toBeNull();
+  });
+});
+
+describe("decodeStatusLine", () => {
+  it("joins the note and what was left out", () => {
+    expect(decodeStatusLine({ note: "n", truncated: true, omitted: 3 })).toBe("n; truncated: 3 annotation(s) omitted");
+  });
+
+  it("is empty when there is nothing to say", () => {
+    expect(decodeStatusLine({ note: null, truncated: false, omitted: 0 })).toBe("");
   });
 });
