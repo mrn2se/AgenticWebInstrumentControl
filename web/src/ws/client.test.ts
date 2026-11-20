@@ -141,6 +141,39 @@ describe("WsClient request/response correlation", () => {
     expect(notices).toEqual([{ id: req?.id, code: "port_protected", msg: "no" }]);
   });
 
+  // The Bench tab asks a real bench for `sim.status` on every page load to
+  // decide whether to show itself; its `sim_disabled` answer landed on the
+  // error banner.
+  it("keeps a quiet request's refusal off the error notices but still rejects it", async () => {
+    client.connect();
+    sockets[0]?.open();
+
+    const notices: Array<{ code: string }> = [];
+    client.errors.on((notice) => notices.push(notice));
+
+    const promise = client.send("sim.status", {}, { quiet: true });
+    const [req] = sentRequests(sockets[0]!);
+    sockets[0]?.receive(
+      JSON.stringify({ v: 1, id: req?.id, ok: false, error: { code: "sim_disabled", msg: "no virtual bench" } }),
+    );
+
+    await expect(promise).rejects.toThrow("no virtual bench");
+    expect(notices).toEqual([]);
+  });
+
+  it("still takes a bare number as the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      client.connect();
+      sockets[0]?.open();
+      const promise = client.send("device.list", {}, 50);
+      vi.advanceTimersByTime(60);
+      await expect(promise).rejects.toThrow(/timed out after 50ms/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("dispatches messages with no id to event subscribers, not to any pending request", () => {
     client.connect();
     sockets[0]?.open();

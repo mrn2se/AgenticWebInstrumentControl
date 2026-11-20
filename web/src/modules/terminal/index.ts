@@ -20,6 +20,7 @@ import {
 import {
   applySessionState,
   isWritable,
+  canForceRelease,
   removeSession,
   stateBadge,
   upsertSession,
@@ -742,6 +743,27 @@ class TerminalModule extends AwicModule {
 
   private closeSession(sessionId: number): void {
     this.ctx.ws.send("term.close", { session: sessionId }).catch(() => {});
+    this.dropSession(sessionId);
+  }
+
+  /**
+   * *Release*: closes the port for every client that joined it — another
+   * tab, an agent over MCP — not just for this tab, so a session left open
+   * somewhere cannot keep a port from being used. They see it `closed`.
+   */
+  private async releaseSession(sessionId: number): Promise<void> {
+    const label = this.sessions.get(sessionId)?.label ?? `session ${sessionId}`;
+    try {
+      await this.ctx.ws.send("term.close", { session: sessionId, force: true });
+      this.statusEl.textContent = "";
+      this.dropSession(sessionId);
+    } catch (err) {
+      this.statusEl.textContent = `Could not release ${label}: ${toErrorInfo(err).msg}`;
+    }
+  }
+
+  /** Forgets a session on this tab: its pane, its tab, the active choice. */
+  private dropSession(sessionId: number): void {
     const pane = this.panes.get(sessionId);
     pane?.term.dispose();
     pane?.container.remove();
@@ -781,6 +803,19 @@ class TerminalModule extends AwicModule {
         ev.stopPropagation();
         this.closeSession(session.sessionId);
       });
+      if (canForceRelease(session)) {
+        const release = document.createElement("button");
+        release.type = "button";
+        release.className = "text-sm leading-none hover:opacity-70";
+        release.textContent = "⏏";
+        release.title = "Release: close this port for every client (other tabs, agents) and free it";
+        release.setAttribute("aria-label", `Release ${session.label} for every client`);
+        release.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void this.releaseSession(session.sessionId);
+        });
+        tab.appendChild(release);
+      }
       tab.appendChild(close);
 
       this.tabsEl.appendChild(tab);

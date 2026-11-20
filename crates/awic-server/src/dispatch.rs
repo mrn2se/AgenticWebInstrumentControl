@@ -39,6 +39,7 @@ fn terminal_error_response(id: u32, err: TerminalError) -> Response {
         TerminalError::SettingsRequired(_) => "serial_settings_required",
         TerminalError::UnknownSession(_) => "unknown_terminal_session",
         TerminalError::ReadOnly(_) => "terminal_session_read_only",
+        TerminalError::Persistent(_) => "terminal_session_persistent",
         TerminalError::BadWritePayload => "invalid_request",
         TerminalError::BadBase64(_) => "invalid_request",
         TerminalError::Busy(_) => "terminal_source_busy",
@@ -1253,12 +1254,35 @@ pub async fn handle_request_with_origin(
             Err(err) => terminal_error_response(id, err),
         },
 
+        Request::TermClose {
+            id,
+            session,
+            force: Some(true),
+            ..
+        } => {
+            // This connection's own subscription went with everyone else's.
+            term_subs.lock().await.remove(&session);
+            match state.terminal().force_close(session).await {
+                Ok(()) => {
+                    tracing::info!(origin, "term.close session={session} force");
+                    Response::ok(id, ResponseResult::TermClose(TermCloseResult {}))
+                }
+                Err(err) => terminal_error_response(id, err),
+            }
+        }
+
         Request::TermClose { id, session, .. } => {
             let subscriber_id = term_subs.lock().await.remove(&session);
             match subscriber_id {
                 Some(subscriber_id) => match state.terminal().close(session, subscriber_id).await {
                     Ok(()) => {
                         tracing::info!(origin, "term.close session={session}");
+                        Response::ok(id, ResponseResult::TermClose(TermCloseResult {}))
+                    }
+                    // Joined here, but already gone: another client
+                    // force-closed it. There is nothing left to leave, and
+                    // closing twice is not an error.
+                    Err(TerminalError::UnknownSession(_)) => {
                         Response::ok(id, ResponseResult::TermClose(TermCloseResult {}))
                     }
                     Err(err) => terminal_error_response(id, err),

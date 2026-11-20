@@ -850,6 +850,7 @@ impl McpHost {
             v: 1,
             id: 0,
             session,
+            force: None,
         })
         .await?;
         self.serial_buffers.lock().await.remove(&session);

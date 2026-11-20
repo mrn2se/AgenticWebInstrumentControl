@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify};
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex, Notify};
 
 use awic_core::EventBus;
 use awic_proto::{
@@ -56,6 +56,8 @@ pub enum TerminalError {
     UnknownSession(u16),
     #[error("session {0} is read-only")]
     ReadOnly(u16),
+    #[error("session {0} is the server log; it stays open for the server's life and cannot be force-closed")]
+    Persistent(u16),
     #[error("term.write must set exactly one of data or data_b64")]
     BadWritePayload,
     #[error("data_b64 is not valid base64: {0}")]
@@ -181,6 +183,9 @@ pub struct Session {
     next_subscriber_id: AtomicU64,
     write_tx: mpsc::Sender<Vec<u8>>,
     shutdown: Arc<Notify>,
+    /// Turns `true` once the session's task has ended and dropped its
+    /// connection — for a serial session, once the port is really closed.
+    finished: watch::Receiver<bool>,
 }
 
 impl Session {
@@ -270,7 +275,7 @@ async fn run_session(
         tokio::select! {
             biased;
             _ = session.shutdown.notified() => {
-                tracing::info!(session = session.id, source = %session.source_id, "closing terminal session: last subscriber left");
+                tracing::info!(session = session.id, source = %session.source_id, "closing terminal session");
                 break;
             }
             written = write_rx.recv() => {
@@ -422,6 +427,7 @@ impl SessionManager {
         let connected = provider.connect(source_id, settings).await?;
         let session_id = self.0.next_session_id.fetch_add(1, Ordering::Relaxed);
         let (write_tx, write_rx) = mpsc::channel(SUBSCRIBER_QUEUE_CAPACITY);
+        let (finished_tx, finished_rx) = watch::channel(false);
         let mut scrollback = VecDeque::with_capacity(connected.initial_backlog.len());
         scrollback.extend(connected.initial_backlog);
         let session = Arc::new(Session {
@@ -436,6 +442,7 @@ impl SessionManager {
             next_subscriber_id: AtomicU64::new(0),
             write_tx,
             shutdown: Arc::new(Notify::new()),
+            finished: finished_rx,
         });
 
         let (sub_id, rx) = session.subscribe().await;
@@ -457,17 +464,29 @@ impl SessionManager {
                 event_bus,
             )
             .await;
+            // `run_session` owned the connection and has dropped it: the
+            // port is closed from here on.
+            let _ = finished_tx.send(true);
             if !persistent {
-                manager
-                    .0
-                    .by_source
-                    .lock()
-                    .await
-                    .remove(&task_session.source_id);
+                manager.forget(&task_session).await;
             }
         });
 
         Ok((session, sub_id, rx))
+    }
+
+    /// Drops `session` from the source map — only if it is still the one
+    /// there. Removing by source id alone took out a *newer* session on the
+    /// same port when an old one's task ended after the port was reopened
+    /// (a force-close followed straight away by an Open).
+    async fn forget(&self, session: &Arc<Session>) {
+        let mut sessions = self.0.by_source.lock().await;
+        if sessions
+            .get(&session.source_id)
+            .is_some_and(|s| Arc::ptr_eq(s, session))
+        {
+            sessions.remove(&session.source_id);
+        }
     }
 
     async fn session_by_id(&self, session_id: u16) -> Option<Arc<Session>> {
@@ -512,7 +531,54 @@ impl SessionManager {
         }
         Ok(())
     }
+
+    /// `term.close` with `force`: closes `session_id` for **every**
+    /// connection that joined it — other tabs, MCP agents — and releases the
+    /// port, for when a session left open somewhere holds a port someone
+    /// needs. Returns once the port is closed (or after
+    /// [`FORCE_CLOSE_WAIT`], should the connection be slow to drop), so an
+    /// Open sent right after it finds the port free. Every client is told
+    /// with `term.state` `closed`. The server log cannot be force-closed.
+    pub async fn force_close(&self, session_id: u16) -> Result<(), TerminalError> {
+        let session = self
+            .session_by_id(session_id)
+            .await
+            .ok_or(TerminalError::UnknownSession(session_id))?;
+        if session.kind == TerminalKind::Log {
+            return Err(TerminalError::Persistent(session_id));
+        }
+        // Forgotten first, so an Open from now on starts a fresh session
+        // instead of joining this one on its way out.
+        self.forget(&session).await;
+        let joined = {
+            let mut subs = session.subscribers.lock().await;
+            let n = subs.len();
+            // Dropping every sender ends every connection's forwarder.
+            subs.clear();
+            n
+        };
+        session.set_state(TerminalState::Closed).await;
+        session.shutdown.notify_one();
+        let mut finished = session.finished.clone();
+        if tokio::time::timeout(FORCE_CLOSE_WAIT, finished.wait_for(|done| *done))
+            .await
+            .is_err()
+        {
+            tracing::warn!(session = session_id, source = %session.source_id, "force-closed session still releasing its port");
+        }
+        tracing::info!(session = session_id, source = %session.source_id, joined, "terminal session force-closed");
+        self.0.event_bus.publish(Event::TermState {
+            v: PROTOCOL_VERSION,
+            session: session_id,
+            state: TerminalState::Closed,
+            msg: Some("released: force-closed for every client".into()),
+        });
+        Ok(())
+    }
 }
+
+/// How long [`SessionManager::force_close`] waits for the port to close.
+pub const FORCE_CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {
@@ -742,6 +808,92 @@ mod tests {
         assert!(
             manager.session_by_id(session.id).await.is_none(),
             "a non-persistent session must be forgotten once its last subscriber leaves"
+        );
+    }
+
+    /// The Terminal tab's "Release" button: a port held by a session that
+    /// some other tab or an agent still has open must come free on request.
+    #[tokio::test]
+    async fn force_close_releases_the_port_for_every_subscriber() {
+        let (source, _writes_rx) = memory_source("mem:4", TerminalKind::Serial, false);
+        let bus = EventBus::default();
+        let mut events = bus.subscribe();
+        let manager = SessionManager::new(vec![source.clone()], bus);
+        let settings = SerialSettings {
+            baud: 9600,
+            data_bits: 8,
+            parity: awic_proto::Parity::None,
+            stop_bits: awic_proto::StopBits::One,
+        };
+        let (session, _sub_a, mut out_a) = manager
+            .open("mem:4", OpenSettings::serial(settings))
+            .await
+            .unwrap();
+        let (_, _sub_b, mut out_b) = manager
+            .open("mem:4", OpenSettings::serial(settings))
+            .await
+            .unwrap();
+
+        manager.force_close(session.id).await.unwrap();
+
+        // The connection is dropped by the time force_close returns: the
+        // memory source's event sender sees its receiver gone.
+        let port_tx = source.events_tx.lock().unwrap().clone().unwrap();
+        assert!(
+            port_tx.is_closed(),
+            "the port must be closed when force_close returns"
+        );
+        // Both subscribers' streams end.
+        assert_eq!(
+            timeout(Duration::from_millis(200), out_a.recv())
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            timeout(Duration::from_millis(200), out_b.recv())
+                .await
+                .unwrap(),
+            None
+        );
+        // Every client hears it.
+        let closed = timeout(Duration::from_millis(200), async {
+            loop {
+                if let Ok(Event::TermState {
+                    session: s,
+                    state,
+                    msg,
+                    ..
+                }) = events.recv().await
+                {
+                    if s == session.id && state == TerminalState::Closed {
+                        return msg;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(closed.unwrap().contains("force-closed"));
+        // An Open straight after starts a fresh session, not the dead one.
+        let (fresh, _, _out) = manager
+            .open("mem:4", OpenSettings::serial(settings))
+            .await
+            .unwrap();
+        assert_ne!(fresh.id, session.id);
+        // ...and the old session's task ending does not take the new one with it.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(manager.session_by_id(fresh.id).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn the_server_log_cannot_be_force_closed() {
+        let (source, _writes_rx) = memory_source("log", TerminalKind::Log, true);
+        let manager = SessionManager::new(vec![source], EventBus::default());
+        let (session, _sub, _out) = manager.open("log", OpenSettings::default()).await.unwrap();
+        assert_eq!(
+            manager.force_close(session.id).await.unwrap_err(),
+            TerminalError::Persistent(session.id)
         );
     }
 

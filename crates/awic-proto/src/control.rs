@@ -429,8 +429,18 @@ pub enum Request {
     /// Leaves a terminal session. The underlying serial port closes once
     /// the last connection leaves it (SPECIFICATION.md §11.2.1); a `log`
     /// session has no underlying resource to release.
+    ///
+    /// `force`: close the session for **every** connection and release the
+    /// port now, whoever else has joined it — another tab, or an agent over
+    /// MCP. They see `term.state` `closed`. Refused for a `log` session.
     #[serde(rename = "term.close")]
-    TermClose { v: u8, id: u32, session: u16 },
+    TermClose {
+        v: u8,
+        id: u32,
+        session: u16,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        force: Option<bool>,
+    },
 
     /// The MCP endpoint's connection details, sessions and logging state
     /// (SPECIFICATION.md §8.5).
@@ -1677,7 +1687,24 @@ mod tests {
             Request::TermClose {
                 v: 1,
                 id: 54,
-                session: 1
+                session: 1,
+                force: None,
+            }
+        );
+        assert_eq!(serde_json::to_value(&req).unwrap(), json);
+    }
+
+    #[test]
+    fn term_close_force_round_trips() {
+        let json = json!({ "v": 1, "id": 55, "op": "term.close", "session": 2, "force": true });
+        let req: Request = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            req,
+            Request::TermClose {
+                v: 1,
+                id: 55,
+                session: 2,
+                force: Some(true),
             }
         );
         assert_eq!(serde_json::to_value(&req).unwrap(), json);

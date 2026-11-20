@@ -103,6 +103,22 @@ interface PendingRequest {
   readonly resolve: (value: unknown) => void;
   readonly reject: (err: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  /** Refusals go to the caller only, not to `errors` (see {@link SendOptions.quiet}). */
+  readonly quiet: boolean;
+}
+
+/** Per-call options for {@link WsClient.send}. */
+export interface SendOptions {
+  /** Overrides the client's default per-request timeout for this call. */
+  readonly timeoutMs?: number;
+  /**
+   * A refusal rejects the promise as usual but is not published on `errors`,
+   * so it never reaches the error banner. For probes whose "no" is an
+   * answer, not a fault: asking a real bench for `sim.status` to decide
+   * whether to show the Bench tab drew `[sim_disabled] this server runs no
+   * virtual bench` on every page load.
+   */
+  readonly quiet?: boolean;
 }
 
 export interface WsClientOptions {
@@ -199,12 +215,18 @@ export class WsClient {
    * matching `id` arrives, or rejects on an `{ ok: false }` response, a
    * timeout, or the connection dropping first.
    *
-   * `timeoutMs` overrides the client's default per-request timeout for this
-   * one call — needed for `rec.wait` (SPEC §2.9.3), whose own `timeout_ms`
-   * can be up to 600 000 ms server-side; without this, the client would give
+   * A number as the third argument is the timeout for this one call; an
+   * object gives the timeout and `quiet` ({@link SendOptions}). The timeout
+   * override is needed for `rec.wait` (SPEC §2.9.3), whose own `timeout_ms`
+   * can be up to 600 000 ms server-side; without it, the client would give
    * up and reject long before a legitimately slow-to-occur pattern resolves.
    */
-  send<Op extends RequestOp>(op: Op, params: RequestParams<Op>, timeoutMs?: number): Promise<ResultForOp[Op]> {
+  send<Op extends RequestOp>(
+    op: Op,
+    params: RequestParams<Op>,
+    options?: number | SendOptions,
+  ): Promise<ResultForOp[Op]> {
+    const { timeoutMs, quiet = false } = typeof options === "number" ? { timeoutMs: options } : (options ?? {});
     const socket = this.socket;
     if (!socket) {
       return Promise.reject(new Error(`cannot send "${op}": socket is not connected`));
@@ -223,6 +245,7 @@ export class WsClient {
         resolve: resolve as (value: unknown) => void,
         reject,
         timer,
+        quiet,
       });
 
       socket.send(JSON.stringify(request));
@@ -317,7 +340,7 @@ export class WsClient {
         msg: "response marked ok=false with no error info",
       };
       pending.reject(new RpcError(info));
-      this.errors.emit({ id: response.id, ...info });
+      if (!pending.quiet) this.errors.emit({ id: response.id, ...info });
     }
   }
 
